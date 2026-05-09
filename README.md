@@ -18,8 +18,9 @@ AI email triage agent. Connects to your Gmail, classifies your inbox into catego
 | Phase | Status | Scope |
 |---|---|---|
 | 1 — Scaffold + Auth | ✅ | Supabase auth (magic link + Google), `/dashboard` middleware, DB schema, landing page |
-| 2 — Gmail + AI | ⏳ | Gmail OAuth, email ingestion, AI classification + summary + draft reply |
-| 3 — Daily summary + Stripe | ⏳ | Daily summary view, Stripe paywall (Free vs Pro $19/mo) |
+| 2 — Gmail OAuth + ingestion | ✅ | Gmail OAuth (read-only), fetch + store last 50 emails, dashboard list view |
+| 3 — AI classification + summaries | ⏳ | Categorize, urgency score, summary, action items, draft replies |
+| 4 — Daily summary + Stripe | ⏳ | Daily summary view, Stripe paywall (Free vs Pro $19/mo) |
 
 ## Setup
 
@@ -45,14 +46,16 @@ cp .env.local.example .env.local
 
 Fill in the Supabase values. The OpenRouter / Google / Stripe vars can stay empty for Phase 1.
 
-### 4. Run the DB migration
+### 4. Run the DB migrations
 
-In the Supabase dashboard → **SQL Editor** → **New query**, paste the contents of [`supabase/migrations/0001_init.sql`](supabase/migrations/0001_init.sql) and run.
+In the Supabase dashboard → **SQL Editor** → **New query**, run each migration in order:
+1. [`supabase/migrations/0001_init.sql`](supabase/migrations/0001_init.sql) — base schema (4 tables + RLS + triggers)
+2. [`supabase/migrations/0002_gmail_emails.sql`](supabase/migrations/0002_gmail_emails.sql) — adds `body` and `received_at` columns to `emails` for Phase 2 ingestion
 
 Verify in **Table Editor** that all four tables exist with **RLS enabled**:
 - `profiles`
 - `gmail_connections`
-- `emails`
+- `emails` (should now include `body` and `received_at` columns)
 - `daily_summaries`
 
 ### 5. Configure auth redirect URLs
@@ -69,9 +72,25 @@ In **Authentication → Providers → Google**:
    - **Authorized redirect URI**: `https://<your-project-ref>.supabase.co/auth/v1/callback`
 3. Paste the **Client ID** and **Client Secret** into Supabase.
 
-> **Note**: This is the *sign-in* OAuth client. Phase 2 will require a *separate* OAuth client (with the Gmail readonly scope) for actually reading user mailboxes.
+> **Note**: This is the *sign-in* OAuth client. The Gmail-data OAuth client below is separate.
 
-### 7. Run the app
+### 7. Set up the Gmail-data OAuth client (Phase 2)
+
+This is the OAuth client InboxIQ uses to **read** mailboxes — separate from the sign-in client above.
+
+1. In [Google Cloud Console → APIs & Services](https://console.cloud.google.com/apis/library):
+   - **Enable Gmail API** for your project.
+   - **OAuth consent screen**: External, add the scope `.../auth/gmail.readonly`. Add your own Google account as a Test User while the app is in testing mode.
+2. **Credentials → Create credentials → OAuth client ID → Web application**:
+   - **Authorized redirect URI**: `http://localhost:3000/api/auth/gmail/callback`
+3. Copy the Client ID + Client Secret into `.env.local`:
+   ```
+   GOOGLE_CLIENT_ID=...
+   GOOGLE_CLIENT_SECRET=...
+   GOOGLE_REDIRECT_URI=http://localhost:3000/api/auth/gmail/callback
+   ```
+
+### 8. Run the app
 
 ```bash
 pnpm dev
@@ -88,22 +107,34 @@ Open [http://localhost:3000](http://localhost:3000).
 - Visiting `/dashboard` while logged out redirects to `/login`.
 - Sign out from the dashboard returns you to `/login`.
 
+## Phase 2 smoke test
+
+- On the dashboard, click **Connect Gmail** → consent screen → bounce through `/api/auth/gmail/callback` → land on `/dashboard?gmail=connected`.
+- Confirm a row exists in **public.gmail_connections** for your user (with `refresh_token` populated).
+- Click **Sync emails** → after a few seconds, see the count ("Synced N emails") and the inbox list below populated with subject + sender + date + "Not yet processed" badge.
+- Confirm rows in **public.emails** have `subject`, `sender`, `snippet`, `body`, and `received_at` set; `category`/`urgency_score`/`summary` should be NULL (those land in Phase 3).
+- Click **Disconnect Gmail** → row disappears from `gmail_connections`; dashboard returns to the Connect card.
+- Disconnect, then re-connect — the OAuth flow should still issue a refresh token (we pass `prompt=consent` to guarantee this).
+
 ## Project layout
 
 ```
 app/
-  actions/         # server actions (auth, sign-out)
-  auth/callback/   # OAuth + magic-link callback (Route Handler)
-  dashboard/       # protected; placeholder Connect Gmail card
-  login/           # magic-link + Google sign-in form
-  layout.tsx       # root layout (fonts, metadata)
-  page.tsx         # landing
-  globals.css      # Tailwind v4 + shadcn theme tokens
-components/ui/     # shadcn components (button, card, input, label, separator, badge)
+  actions/                 # server actions (auth, sign-out, gmail sync/disconnect)
+  api/auth/gmail/init/     # GET → redirects to Google consent
+  api/auth/gmail/callback/ # GET → exchanges code, persists tokens
+  auth/callback/           # Supabase OAuth + magic-link callback
+  dashboard/               # protected; Connect/Sync Gmail + email list
+  login/                   # magic-link + Google sign-in form
+  layout.tsx               # root layout (fonts, metadata)
+  page.tsx                 # landing
+  globals.css              # Tailwind v4 + shadcn theme tokens
+components/                # SetupRequired + ui/ (shadcn)
 lib/
-  supabase/        # browser, server, middleware Supabase clients
-  utils.ts         # cn() helper
-proxy.ts           # session refresh + /dashboard guard (Next 16's renamed middleware)
+  gmail/                   # env, oauth, client (auto-refresh), fetch (body extract)
+  supabase/                # browser, server, middleware Supabase clients
+  utils.ts                 # cn() helper
+proxy.ts                   # session refresh + /dashboard guard (Next 16's renamed middleware)
 supabase/
-  migrations/      # 0001_init.sql
+  migrations/              # 0001_init.sql, 0002_gmail_emails.sql
 ```
