@@ -55,12 +55,13 @@ export async function syncEmails(): Promise<SyncResult> {
     snippet: m.snippet,
     body: m.body,
     received_at: m.receivedAt ? m.receivedAt.toISOString() : null,
-    processed_at: new Date().toISOString(),
   }))
 
-  // Upsert against (user_id, gmail_message_id). Existing rows stay, but their
-  // structural fields are refreshed; AI fields (category/summary/etc.) are
-  // untouched because we don't include them in the upsert payload.
+  // Upsert against (user_id, gmail_message_id). New rows get processed_at via
+  // the column default. Existing rows keep their processed_at (we omit it
+  // from the payload), and their AI fields (category/summary/etc.) stay
+  // untouched. processed_at is overwritten only by the AI processor in
+  // app/actions/process.ts, which is what the daily-quota check reads.
   const { error: upsertError, count } = await supabase
     .from("emails")
     .upsert(rows, {

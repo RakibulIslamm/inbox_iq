@@ -1,3 +1,4 @@
+import Link from "next/link"
 import { AlertTriangle, CheckCircle2, Mail, Unplug } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button, buttonVariants } from "@/components/ui/button"
@@ -10,12 +11,20 @@ import {
   CardTitle,
 } from "@/components/ui/card"
 import { Separator } from "@/components/ui/separator"
+import { cn } from "@/lib/utils"
 import { disconnectGmail } from "@/app/actions/gmail"
+import { readAIEnv } from "@/lib/ai/env"
 import { readGmailEnv } from "@/lib/gmail/env"
 import { createClient } from "@/lib/supabase/server"
+import { EMAIL_CATEGORIES } from "@/lib/ai/agents/classifier"
+import { ProcessButton } from "./process-button"
 import { SyncButton } from "./sync-button"
 
-type SearchParams = Promise<{ gmail?: string; gmail_error?: string }>
+type SearchParams = Promise<{
+  gmail?: string
+  gmail_error?: string
+  cat?: string
+}>
 
 const ERROR_MESSAGES: Record<string, string> = {
   gmail_not_configured:
@@ -30,6 +39,23 @@ const ERROR_MESSAGES: Record<string, string> = {
   access_denied: "You declined the consent screen. Connect when ready.",
 }
 
+const FILTERS: { label: string; value: string | null }[] = [
+  { label: "All", value: null },
+  { label: "Urgent", value: "urgent" },
+  { label: "Client", value: "client" },
+  { label: "Newsletter", value: "newsletter" },
+  { label: "Spam", value: "spam" },
+  { label: "Personal", value: "personal" },
+]
+
+const CATEGORY_TONE: Record<string, string> = {
+  urgent: "border-destructive/40 text-destructive",
+  client: "border-foreground/30 text-foreground",
+  newsletter: "border-muted-foreground/30 text-muted-foreground",
+  spam: "border-muted-foreground/30 text-muted-foreground",
+  personal: "border-foreground/20 text-foreground",
+}
+
 export default async function DashboardPage({
   searchParams,
 }: {
@@ -37,12 +63,12 @@ export default async function DashboardPage({
 }) {
   const params = await searchParams
   const gmailConfigured = readGmailEnv().configured
+  const aiConfigured = readAIEnv().configured
 
   const supabase = await createClient()
   const {
     data: { user },
   } = await supabase.auth.getUser()
-  // Layout already enforced auth, so user is non-null here, but TS doesn't know.
   if (!user) return null
 
   const { data: connection } = await supabase
@@ -53,16 +79,29 @@ export default async function DashboardPage({
 
   const connected = Boolean(connection)
 
-  const { data: emails } = connected
-    ? await supabase
-        .from("emails")
-        .select(
-          "id, subject, sender, snippet, category, received_at, processed_at"
-        )
-        .eq("user_id", user.id)
-        .order("received_at", { ascending: false, nullsFirst: false })
-        .limit(50)
-    : { data: null }
+  const activeCategory =
+    params.cat && (EMAIL_CATEGORIES as readonly string[]).includes(params.cat)
+      ? (params.cat as (typeof EMAIL_CATEGORIES)[number])
+      : null
+
+  let emails: EmailRow[] = []
+  if (connected) {
+    let q = supabase
+      .from("emails")
+      .select(
+        "id, subject, sender, snippet, category, urgency_score, summary, action_items, draft_reply, received_at, processed_at"
+      )
+      .eq("user_id", user.id)
+      // Sort by urgency desc (NULLs last) then by received date.
+      .order("urgency_score", { ascending: false, nullsFirst: false })
+      .order("received_at", { ascending: false, nullsFirst: false })
+      .limit(50)
+
+    if (activeCategory) q = q.eq("category", activeCategory)
+
+    const { data } = await q
+    emails = (data ?? []) as EmailRow[]
+  }
 
   const successMessage =
     params.gmail === "connected" ? "Gmail connected." : null
@@ -82,12 +121,17 @@ export default async function DashboardPage({
       {!gmailConfigured ? (
         <GmailSetupCard />
       ) : connected ? (
-        <ConnectedCard />
+        <ConnectedCard aiConfigured={aiConfigured} />
       ) : (
         <ConnectCard />
       )}
 
-      {connected ? <EmailList emails={emails ?? []} /> : null}
+      {connected ? (
+        <>
+          <FilterChips active={activeCategory} />
+          <EmailList emails={emails} activeCategory={activeCategory} />
+        </>
+      ) : null}
     </div>
   )
 }
@@ -105,9 +149,7 @@ function StatusBanner({
       ? "border-foreground/20 text-foreground"
       : "border-destructive/40 text-destructive"
   return (
-    <div
-      className={`flex items-start gap-2 border px-3 py-2 text-xs ${className}`}
-    >
+    <div className={cn("flex items-start gap-2 border px-3 py-2 text-xs", className)}>
       <Icon className="mt-0.5 size-3.5 shrink-0" />
       <span>{message}</span>
     </div>
@@ -156,9 +198,6 @@ function ConnectCard() {
         </ul>
       </CardContent>
       <CardFooter>
-        {/* Plain <a>: this is an API route that 307s to Google. Skipping
-            Next's client-side router avoids RSC-prefetch noise and ensures
-            the redirect chain follows correctly. */}
         <a
           href="/api/auth/gmail/init"
           className={buttonVariants({ className: "w-full" })}
@@ -171,7 +210,7 @@ function ConnectCard() {
   )
 }
 
-function ConnectedCard() {
+function ConnectedCard({ aiConfigured }: { aiConfigured: boolean }) {
   return (
     <Card>
       <CardHeader>
@@ -183,12 +222,24 @@ function ConnectedCard() {
           </Badge>
         </div>
         <CardDescription>
-          Sync to pull the most recent 50 emails. AI classification &amp;
-          summaries arrive in Phase 3.
+          Sync to pull recent emails, then process them through the AI
+          classifier to get categories, urgency scores, summaries, and draft
+          replies.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-        <SyncButton />
+        <div className="grid gap-3 sm:grid-cols-2">
+          <SyncButton />
+          {aiConfigured ? (
+            <ProcessButton />
+          ) : (
+            <div className="rounded-none border border-dashed border-border p-3 text-xs text-muted-foreground">
+              Set <code className="rounded bg-muted px-1">OPENROUTER_API_KEY</code>{" "}
+              in <code className="rounded bg-muted px-1">.env.local</code> to
+              enable AI processing.
+            </div>
+          )}
+        </div>
 
         <Separator />
 
@@ -203,25 +254,60 @@ function ConnectedCard() {
   )
 }
 
+function FilterChips({ active }: { active: string | null }) {
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      {FILTERS.map(({ label, value }) => {
+        const isActive = (value ?? null) === active
+        const href = value ? `/dashboard?cat=${value}` : "/dashboard"
+        return (
+          <Link
+            key={label}
+            href={href}
+            className={buttonVariants({
+              variant: isActive ? "default" : "outline",
+              size: "xs",
+            })}
+            aria-current={isActive ? "page" : undefined}
+          >
+            {label}
+          </Link>
+        )
+      })}
+    </div>
+  )
+}
+
 type EmailRow = {
   id: number
   subject: string | null
   sender: string | null
   snippet: string | null
   category: string | null
+  urgency_score: number | null
+  summary: string | null
+  action_items: string[] | null
+  draft_reply: string | null
   received_at: string | null
   processed_at: string
 }
 
-function EmailList({ emails }: { emails: EmailRow[] }) {
+function EmailList({
+  emails,
+  activeCategory,
+}: {
+  emails: EmailRow[]
+  activeCategory: string | null
+}) {
   if (emails.length === 0) {
     return (
       <Card>
         <CardHeader>
           <CardTitle>Inbox</CardTitle>
           <CardDescription>
-            Nothing synced yet. Click <strong>Sync emails</strong> above to
-            pull your most recent 50.
+            {activeCategory
+              ? `No emails in "${activeCategory}" yet. Try another filter or process more emails.`
+              : "Nothing here yet. Sync to pull recent emails, then click Process emails."}
           </CardDescription>
         </CardHeader>
       </Card>
@@ -231,16 +317,19 @@ function EmailList({ emails }: { emails: EmailRow[] }) {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Inbox · {emails.length}</CardTitle>
+        <CardTitle>
+          Inbox · {emails.length}
+          {activeCategory ? ` · ${activeCategory}` : ""}
+        </CardTitle>
         <CardDescription>
-          Most recent emails synced from Gmail. AI classification arrives in
-          Phase 3.
+          Sorted by urgency, then most recent. Unprocessed emails sit at the
+          bottom.
         </CardDescription>
       </CardHeader>
       <CardContent className="px-0">
         <ul className="divide-y divide-border border-y border-border">
           {emails.map((email) => (
-            <EmailRow key={email.id} email={email} />
+            <EmailItem key={email.id} email={email} />
           ))}
         </ul>
       </CardContent>
@@ -248,7 +337,7 @@ function EmailList({ emails }: { emails: EmailRow[] }) {
   )
 }
 
-function EmailRow({ email }: { email: EmailRow }) {
+function EmailItem({ email }: { email: EmailRow }) {
   const date = email.received_at
     ? new Date(email.received_at)
     : new Date(email.processed_at)
@@ -257,31 +346,75 @@ function EmailRow({ email }: { email: EmailRow }) {
     day: "numeric",
   })
 
+  const tone = email.category ? CATEGORY_TONE[email.category] : null
+  const showSummary = email.summary && email.summary.length > 0
+  const showActions = (email.action_items?.length ?? 0) > 0
+
   return (
-    <li className="flex items-start gap-3 px-4 py-3">
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
-          <span className="truncate text-xs font-medium">
-            {email.sender ?? "(unknown sender)"}
-          </span>
-          <span className="ml-auto shrink-0 text-xs text-muted-foreground">
-            {dateLabel}
-          </span>
+    <li className="flex flex-col gap-2 px-4 py-3">
+      <div className="flex items-start gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <span className="truncate text-xs font-medium">
+              {email.sender ?? "(unknown sender)"}
+            </span>
+            <span className="ml-auto shrink-0 text-xs text-muted-foreground">
+              {dateLabel}
+            </span>
+          </div>
+          <p className="truncate text-xs">{email.subject ?? "(no subject)"}</p>
         </div>
-        <p className="truncate text-xs">{email.subject ?? "(no subject)"}</p>
-        {email.snippet ? (
-          <p className="mt-1 truncate text-xs text-muted-foreground">
-            {email.snippet}
-          </p>
-        ) : null}
+        <div className="flex shrink-0 flex-col items-end gap-1">
+          {email.urgency_score != null ? (
+            <span className="text-xs font-medium tabular-nums">
+              {email.urgency_score}/10
+            </span>
+          ) : null}
+          {email.category ? (
+            <Badge
+              variant="outline"
+              className={cn("uppercase", tone ?? undefined)}
+            >
+              {email.category}
+            </Badge>
+          ) : (
+            <Badge variant="outline">Not yet processed</Badge>
+          )}
+        </div>
       </div>
-      <div className="shrink-0">
-        {email.category ? (
-          <Badge variant="secondary">{email.category}</Badge>
-        ) : (
-          <Badge variant="outline">Not yet processed</Badge>
-        )}
-      </div>
+
+      {showSummary ? (
+        <p className="text-xs text-muted-foreground">{email.summary}</p>
+      ) : email.snippet ? (
+        <p className="line-clamp-2 text-xs text-muted-foreground">
+          {email.snippet}
+        </p>
+      ) : null}
+
+      {showActions ? (
+        <ul className="space-y-0.5">
+          {email.action_items!.map((item, i) => (
+            <li
+              key={`${email.id}-action-${i}`}
+              className="flex gap-1.5 text-xs text-muted-foreground"
+            >
+              <span className="shrink-0">→</span>
+              <span>{item}</span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+
+      {email.draft_reply ? (
+        <details className="text-xs">
+          <summary className="cursor-pointer text-muted-foreground hover:text-foreground">
+            View draft reply
+          </summary>
+          <pre className="mt-2 whitespace-pre-wrap rounded-none border border-border bg-muted/40 p-2 font-sans text-xs">
+            {email.draft_reply}
+          </pre>
+        </details>
+      ) : null}
     </li>
   )
 }
