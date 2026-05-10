@@ -35,6 +35,18 @@ export function readStripeEnv():
 export const STRIPE_SETUP_MESSAGE =
   "Stripe is not configured. Set STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, and STRIPE_PRO_PRICE_ID in .env.local."
 
+/**
+ * True when the configured Stripe key is a test-mode key. Used to surface
+ * the Stripe test card numbers on the billing page (so portfolio visitors
+ * can try the upgrade flow without entering a real card). Stripe encodes
+ * the mode in the key prefix: `sk_test_…` → sandbox, `sk_live_…` → real.
+ * Auto-disappears when the operator swaps to a live key.
+ */
+export function isStripeTestMode(): boolean {
+  const key = process.env.STRIPE_SECRET_KEY ?? ""
+  return key.startsWith("sk_test_")
+}
+
 export const PRO_PLAN = {
   name: "Pro",
   priceMonthly: 19,

@@ -5,7 +5,7 @@ import {
   classifyEmail,
   type Classification,
 } from "@/lib/ai/agents/classifier"
-import { readAIEnv } from "@/lib/ai/env"
+import { aiUnavailableMessage, readAIEnv } from "@/lib/ai/env"
 import { createClient } from "@/lib/supabase/server"
 
 const FREE_TIER_DAILY_LIMIT = 10
@@ -31,8 +31,9 @@ export type ProcessResult =
  * calendar day (UTC), enforced via `processed_at`.
  */
 export async function processEmails(): Promise<ProcessResult> {
-  if (!readAIEnv().configured) {
-    return { ok: false, error: "OpenRouter API is not configured." }
+  const ai = readAIEnv()
+  if (!ai.configured) {
+    return { ok: false, error: aiUnavailableMessage(ai) }
   }
 
   const supabase = await createClient()

@@ -1,6 +1,6 @@
 import type { Metadata } from "next"
 import Link from "next/link"
-import { ArrowRight, CalendarDays, Mail, Sparkles } from "lucide-react"
+import { AlertTriangle, ArrowRight, CalendarDays, Mail, Sparkles } from "lucide-react"
 
 export const metadata: Metadata = { title: "Today" }
 
@@ -34,7 +34,11 @@ export default async function TodayPage() {
   } = await supabase.auth.getUser()
   if (!user) return null
 
-  const aiConfigured = readAIEnv().configured
+  const aiEnv = readAIEnv()
+  const aiConfigured = aiEnv.configured
+  const aiReason: "disabled" | "missing" | null = aiConfigured
+    ? null
+    : aiEnv.reason
   const today = new Date().toISOString().slice(0, 10)
   const dayStart = new Date()
   dayStart.setUTCHours(0, 0, 0, 0)
@@ -120,18 +124,34 @@ export default async function TodayPage() {
               "No briefing yet. Run the summarizer or wait for the daily cron at 08:00 UTC."}
           </CardDescription>
         </CardHeader>
-        {aiConfigured ? (
-          <CardContent>
-            <GenerateSummaryButton hasExisting={Boolean(dailyRow)} />
-          </CardContent>
-        ) : (
-          <CardContent>
+        <CardContent className="space-y-3">
+          <GenerateSummaryButton
+            hasExisting={Boolean(dailyRow)}
+            disabled={!aiConfigured}
+            disabledReason={
+              aiReason === "disabled"
+                ? "AI is disabled for this deployment."
+                : aiReason === "missing"
+                  ? "Set OPENROUTER_API_KEY in .env.local."
+                  : undefined
+            }
+          />
+          {!aiConfigured && aiReason === "disabled" ? (
+            <div className="flex items-start gap-2 border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 text-xs text-amber-700 dark:text-amber-400">
+              <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+              <span>
+                <strong>AI is disabled for this deployment.</strong> Clone the
+                repo locally to try it.
+              </span>
+            </div>
+          ) : !aiConfigured ? (
             <p className="text-xs text-muted-foreground">
-              Set <code className="rounded bg-muted px-1">OPENROUTER_API_KEY</code>{" "}
+              Set{" "}
+              <code className="rounded bg-muted px-1">OPENROUTER_API_KEY</code>{" "}
               to enable AI summaries.
             </p>
-          </CardContent>
-        )}
+          ) : null}
+        </CardContent>
       </Card>
 
       {/* Top urgent emails */}

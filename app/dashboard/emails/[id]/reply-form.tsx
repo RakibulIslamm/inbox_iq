@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useTransition } from "react"
-import { RefreshCw, Send } from "lucide-react"
+import { AlertTriangle, RefreshCw, Send } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import {
@@ -27,11 +27,13 @@ export function ReplyForm({
   initialDraft,
   alreadyReplied,
   aiConfigured,
+  aiReason,
 }: {
   emailId: number
   initialDraft: string
   alreadyReplied: boolean
   aiConfigured: boolean
+  aiReason: "disabled" | "missing" | null
 }) {
   const [body, setBody] = useState(initialDraft)
   const [status, setStatus] = useState<Status>({ kind: "idle" })
@@ -85,7 +87,9 @@ export function ReplyForm({
         placeholder={
           aiConfigured
             ? "Click Regenerate to draft a reply, or write your own here."
-            : "Write your reply here. (Set OPENROUTER_API_KEY to enable AI drafting.)"
+            : aiReason === "disabled"
+              ? "Write your reply here. (AI drafting is disabled for this deployment.)"
+              : "Write your reply here. (Set OPENROUTER_API_KEY to enable AI drafting.)"
         }
       />
 
@@ -99,35 +103,50 @@ export function ReplyForm({
           {pending && status.kind === "idle" ? "Sending..." : "Send reply"}
         </Button>
 
-        {aiConfigured ? (
-          <>
+        <Button
+          type="button"
+          variant="outline"
+          onClick={() => handleRegenerate(null)}
+          disabled={pending || !aiConfigured}
+          title={
+            !aiConfigured && aiReason === "disabled"
+              ? "AI is disabled for this deployment."
+              : !aiConfigured && aiReason === "missing"
+                ? "Set OPENROUTER_API_KEY in .env.local."
+                : undefined
+          }
+        >
+          <RefreshCw className={pending ? "size-3.5 animate-spin" : "size-3.5"} />
+          Regenerate
+        </Button>
+        <div className="flex items-center gap-1">
+          <span className="text-xs text-muted-foreground">Tone:</span>
+          {TONES.map((t) => (
             <Button
+              key={t.value}
               type="button"
-              variant="outline"
-              onClick={() => handleRegenerate(null)}
-              disabled={pending}
+              variant="ghost"
+              size="xs"
+              onClick={() => handleRegenerate(t.value)}
+              disabled={pending || !aiConfigured}
+              title={
+                !aiConfigured && aiReason === "disabled"
+                  ? "AI is disabled for this deployment."
+                  : undefined
+              }
             >
-              <RefreshCw className={pending ? "size-3.5 animate-spin" : "size-3.5"} />
-              Regenerate
+              {t.label}
             </Button>
-            <div className="flex items-center gap-1">
-              <span className="text-xs text-muted-foreground">Tone:</span>
-              {TONES.map((t) => (
-                <Button
-                  key={t.value}
-                  type="button"
-                  variant="ghost"
-                  size="xs"
-                  onClick={() => handleRegenerate(t.value)}
-                  disabled={pending}
-                >
-                  {t.label}
-                </Button>
-              ))}
-            </div>
-          </>
-        ) : null}
+          ))}
+        </div>
       </div>
+
+      {!aiConfigured && aiReason === "disabled" ? (
+        <span className="inline-flex items-center gap-1.5 border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-xs text-amber-700 dark:text-amber-400">
+          <AlertTriangle className="size-3" />
+          AI is disabled for this deployment.
+        </span>
+      ) : null}
 
       {status.kind === "sent" ? (
         <p className="text-xs text-muted-foreground">

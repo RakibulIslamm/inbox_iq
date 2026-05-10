@@ -51,7 +51,11 @@ export default async function EmailDetailPage({
 
   if (!email) notFound()
 
-  const aiConfigured = readAIEnv().configured
+  const aiEnv = readAIEnv()
+  const aiConfigured = aiEnv.configured
+  const aiReason: "disabled" | "missing" | null = aiConfigured
+    ? null
+    : aiEnv.reason
   const date = email.received_at ? new Date(email.received_at) : null
   const dateLabel = date
     ? date.toLocaleString(undefined, {
@@ -175,6 +179,7 @@ export default async function EmailDetailPage({
             initialDraft={email.draft_reply ?? ""}
             alreadyReplied={Boolean(email.replied_at)}
             aiConfigured={aiConfigured}
+            aiReason={aiReason}
           />
         </CardContent>
       </Card>
@@ -189,7 +194,7 @@ export default async function EmailDetailPage({
         <CardContent>
           <Separator className="mb-3" />
           {email.body ? (
-            <pre className="max-h-96 overflow-auto whitespace-pre-wrap break-words font-sans text-xs leading-relaxed text-muted-foreground">
+            <pre className="max-h-96 overflow-auto whitespace-pre-wrap wrap-break-word font-sans text-xs leading-relaxed text-muted-foreground">
               {email.body}
             </pre>
           ) : email.snippet ? (

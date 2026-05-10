@@ -13,7 +13,13 @@ async function runProcess(): Promise<ProcessResult> {
   return processEmails()
 }
 
-export function ProcessButton() {
+export function ProcessButton({
+  disabled = false,
+  disabledReason,
+}: {
+  disabled?: boolean
+  disabledReason?: string
+} = {}) {
   const [state, action, pending] = useActionState(runProcess, INITIAL)
   const lastReported = useRef<ProcessResult | null>(null)
 
@@ -40,7 +46,12 @@ export function ProcessButton() {
 
   return (
     <form action={action} className="flex flex-col gap-2">
-      <Button type="submit" variant="secondary" disabled={pending}>
+      <Button
+        type="submit"
+        variant="secondary"
+        disabled={pending || disabled}
+        title={disabled ? disabledReason : undefined}
+      >
         <Sparkles className={pending ? "size-3.5 animate-pulse" : "size-3.5"} />
         {pending ? "Classifying..." : "Process emails"}
       </Button>

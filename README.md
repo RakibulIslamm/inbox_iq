@@ -143,6 +143,16 @@ Open [http://localhost:3000](http://localhost:3000).
    ```
 4. Default model is in [`lib/ai/env.ts`](lib/ai/env.ts) — swap to e.g. `anthropic/claude-sonnet-4.6`, `openai/gpt-4o-mini`, or `google/gemini-2.5-flash` with one line.
 
+#### Public-demo kill switch
+
+Set `AI_DISABLED=true` to hard-disable every OpenRouter call. The dashboard hides Process / Generate-briefing / Regenerate-draft buttons and explains the state inline; crons return `200 { ok: true, skipped: "ai_disabled" }`; previously-stored classifications, summaries, and drafts continue to render read-only. This is the lever to flip on the public Vercel deployment so visitors can browse the demo without burning through your OpenRouter credits.
+
+```
+AI_DISABLED=true
+```
+
+The flag wins regardless of whether the keys above are present, so you can test it locally without unsetting your dev keys.
+
 ### 5. Cron secret
 
 ```

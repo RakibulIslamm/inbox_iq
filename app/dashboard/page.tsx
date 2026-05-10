@@ -72,7 +72,11 @@ export default async function DashboardPage({
 }) {
   const params = await searchParams
   const gmailConfigured = readGmailEnv().configured
-  const aiConfigured = readAIEnv().configured
+  const aiEnv = readAIEnv()
+  const aiConfigured = aiEnv.configured
+  const aiReason: "disabled" | "missing" | null = aiConfigured
+    ? null
+    : aiEnv.reason
 
   const supabase = await createClient()
   const {
@@ -182,6 +186,7 @@ export default async function DashboardPage({
       ) : connected ? (
         <ConnectedCard
           aiConfigured={aiConfigured}
+          aiReason={aiReason}
           lastSyncIso={lastSyncIso}
           connectedEmail={connectedEmail}
         />
@@ -297,10 +302,12 @@ function ConnectCard() {
 
 function ConnectedCard({
   aiConfigured,
+  aiReason,
   lastSyncIso,
   connectedEmail,
 }: {
   aiConfigured: boolean
+  aiReason: "disabled" | "missing" | null
   lastSyncIso: string | null
   connectedEmail: string | null
 }) {
@@ -335,16 +342,34 @@ function ConnectedCard({
       <CardContent className="space-y-4">
         <div className="grid gap-3 sm:grid-cols-2">
           <SyncButton />
-          {aiConfigured ? (
-            <ProcessButton />
-          ) : (
-            <div className="rounded-none border border-dashed border-border p-3 text-xs text-muted-foreground">
-              Set <code className="rounded bg-muted px-1">OPENROUTER_API_KEY</code>{" "}
-              in <code className="rounded bg-muted px-1">.env.local</code> to
-              enable AI processing.
-            </div>
-          )}
+          <ProcessButton
+            disabled={!aiConfigured}
+            disabledReason={
+              aiReason === "disabled"
+                ? "AI is disabled for this deployment."
+                : aiReason === "missing"
+                  ? "Set OPENROUTER_API_KEY in .env.local."
+                  : undefined
+            }
+          />
         </div>
+
+        {!aiConfigured && aiReason === "disabled" ? (
+          <div className="flex items-start gap-2 border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 text-xs text-amber-700 dark:text-amber-400">
+            <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+            <span>
+              <strong>AI is disabled for this deployment.</strong> Clone the
+              repo locally to try it.
+            </span>
+          </div>
+        ) : !aiConfigured ? (
+          <div className="rounded-none border border-dashed border-border p-3 text-xs text-muted-foreground">
+            Set{" "}
+            <code className="rounded bg-muted px-1">OPENROUTER_API_KEY</code>{" "}
+            in <code className="rounded bg-muted px-1">.env.local</code> to
+            enable AI processing.
+          </div>
+        ) : null}
 
         <LastSync since={lastSyncIso} />
 

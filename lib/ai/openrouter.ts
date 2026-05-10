@@ -1,5 +1,5 @@
 import OpenAI from "openai"
-import { AI_SETUP_MESSAGE, readAIEnv } from "./env"
+import { aiUnavailableMessage, readAIEnv } from "./env"
 
 /**
  * Returns an OpenAI-SDK-compatible client pointed at OpenRouter. Identical
@@ -8,10 +8,16 @@ import { AI_SETUP_MESSAGE, readAIEnv } from "./env"
  *
  * The HTTP-Referer / X-Title headers are recommended by OpenRouter for
  * attribution and analytics.
+ *
+ * Defense-in-depth: the throw here should never fire in normal operation —
+ * every server action / cron / UI surface that reaches this function has
+ * already pre-checked `readAIEnv().configured`. The throw exists only as
+ * a safety net so a future code path can't accidentally bypass the kill
+ * switch.
  */
 export function createOpenRouterClient(): OpenAI {
   const cfg = readAIEnv()
-  if (!cfg.configured) throw new Error(AI_SETUP_MESSAGE)
+  if (!cfg.configured) throw new Error(aiUnavailableMessage(cfg))
 
   return new OpenAI({
     apiKey: cfg.env.apiKey,

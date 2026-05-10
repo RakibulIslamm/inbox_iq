@@ -17,8 +17,12 @@ async function runGenerate(): Promise<GenerateSummaryResult> {
 
 export function GenerateSummaryButton({
   hasExisting,
+  disabled = false,
+  disabledReason,
 }: {
   hasExisting: boolean
+  disabled?: boolean
+  disabledReason?: string
 }) {
   const [state, action, pending] = useActionState(runGenerate, INITIAL)
   const lastReported = useRef<GenerateSummaryResult | null>(null)
@@ -37,7 +41,11 @@ export function GenerateSummaryButton({
 
   return (
     <form action={action} className="flex flex-col gap-2">
-      <Button type="submit" disabled={pending}>
+      <Button
+        type="submit"
+        disabled={pending || disabled}
+        title={disabled ? disabledReason : undefined}
+      >
         <Sparkles className={pending ? "size-3.5 animate-pulse" : "size-3.5"} />
         {pending
           ? "Generating..."

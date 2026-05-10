@@ -5,6 +5,7 @@ import {
   CalendarClock,
   CheckCircle2,
   CreditCard,
+  FlaskConical,
   Receipt,
   Sparkles,
 } from "lucide-react"
@@ -27,7 +28,12 @@ import {
 } from "@/components/ui/card"
 import { cn } from "@/lib/utils"
 import { createStripeClient } from "@/lib/stripe/client"
-import { FREE_PLAN, PRO_PLAN, readStripeEnv } from "@/lib/stripe/env"
+import {
+  FREE_PLAN,
+  isStripeTestMode,
+  PRO_PLAN,
+  readStripeEnv,
+} from "@/lib/stripe/env"
 import {
   extractSubscriptionState,
   pickPrimarySubscription,
@@ -412,6 +418,8 @@ export default async function BillingPage({
         ) : null}
       </Card>
 
+      {stripeCfg.configured && isStripeTestMode() ? <TestCardsCard /> : null}
+
       {/* Plans comparison */}
       <div className="grid gap-4 md:grid-cols-2">
         <PlanCard
@@ -553,6 +561,85 @@ function SubscriptionStateBanner({
   }
 
   return null
+}
+
+/**
+ * Visible only when STRIPE_SECRET_KEY is a sandbox key (`sk_test_…`). Surfaces
+ * Stripe's documented test card numbers so portfolio visitors can drive the
+ * Pro upgrade flow end-to-end without entering real card details.
+ *
+ * Auto-disappears the moment the operator swaps to a live key — `isStripeTestMode()`
+ * reads the prefix at request time.
+ *
+ * Test card reference: https://docs.stripe.com/testing
+ */
+function TestCardsCard() {
+  const cards: Array<{
+    label: string
+    number: string
+    note: string
+    tone: "success" | "warn" | "error"
+  }> = [
+    {
+      label: "Successful payment",
+      number: "4242 4242 4242 4242",
+      note: "Use this for the happy-path upgrade flow.",
+      tone: "success",
+    },
+    {
+      label: "Requires authentication (3D Secure)",
+      number: "4000 0027 6000 3184",
+      note: "Triggers Stripe's authentication challenge.",
+      tone: "warn",
+    },
+    {
+      label: "Card declined",
+      number: "4000 0000 0000 0002",
+      note: "Stripe will reject the charge — useful for testing failure UX.",
+      tone: "error",
+    },
+  ]
+
+  const toneClass = (tone: "success" | "warn" | "error") =>
+    tone === "success"
+      ? "border-foreground/30"
+      : tone === "warn"
+        ? "border-amber-500/40 text-amber-700 dark:text-amber-400"
+        : "border-destructive/40 text-destructive"
+
+  return (
+    <Card className="border-amber-500/40 bg-amber-500/5">
+      <CardHeader>
+        <div className="flex items-center gap-2">
+          <FlaskConical className="size-4 text-amber-700 dark:text-amber-400" />
+          <CardTitle>Test mode · use a Stripe test card</CardTitle>
+        </div>
+        <CardDescription>
+          This deployment runs against Stripe&apos;s sandbox. Real cards are
+          rejected — pick one of the numbers below to drive the upgrade
+          flow. Use any future expiry, any 3-digit CVC, and any postal code.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="px-0">
+        <ul className="divide-y divide-border border-y border-border">
+          {cards.map((c) => (
+            <li
+              key={c.number}
+              className="flex flex-wrap items-center gap-3 px-4 py-3 text-xs"
+            >
+              <code className="rounded bg-muted px-2 py-1 font-mono text-[11px] tabular-nums tracking-wider">
+                {c.number}
+              </code>
+              <Badge variant="outline" className={cn("uppercase", toneClass(c.tone))}>
+                {c.label}
+              </Badge>
+              <span className="text-muted-foreground">{c.note}</span>
+            </li>
+          ))}
+        </ul>
+      </CardContent>
+    </Card>
+  )
 }
 
 function PaymentMethodCard({ pm }: { pm: NonNullable<PaymentMethodInfo> }) {

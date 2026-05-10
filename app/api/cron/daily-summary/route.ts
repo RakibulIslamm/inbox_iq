@@ -32,7 +32,13 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 })
   }
 
-  if (!readAIEnv().configured) {
+  const ai = readAIEnv()
+  if (!ai.configured && ai.reason === "disabled") {
+    // Kill switch on — intentional skip, not a failure. Vercel cron logs
+    // stay green.
+    return NextResponse.json({ ok: true, skipped: "ai_disabled" })
+  }
+  if (!ai.configured) {
     return NextResponse.json(
       { ok: false, error: "OpenRouter not configured." },
       { status: 500 }

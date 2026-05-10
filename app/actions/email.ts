@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache"
 import { regenerateReply } from "@/lib/ai/agents/reply"
-import { readAIEnv } from "@/lib/ai/env"
+import { aiUnavailableMessage, readAIEnv } from "@/lib/ai/env"
 import {
   GmailNotConnectedError,
   GmailReauthRequiredError,
@@ -86,8 +86,9 @@ export type RegenerateResult =
 export async function regenerateDraft(
   input: RegenerateInput
 ): Promise<RegenerateResult> {
-  if (!readAIEnv().configured) {
-    return { ok: false, error: "OpenRouter is not configured." }
+  const ai = readAIEnv()
+  if (!ai.configured) {
+    return { ok: false, error: aiUnavailableMessage(ai) }
   }
 
   const supabase = await createClient()

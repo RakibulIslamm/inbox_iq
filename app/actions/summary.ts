@@ -7,7 +7,7 @@ import {
   type DailyDigestEmail,
   type DailySummary,
 } from "@/lib/ai/agents/summarizer"
-import { readAIEnv } from "@/lib/ai/env"
+import { aiUnavailableMessage, readAIEnv } from "@/lib/ai/env"
 import { createClient } from "@/lib/supabase/server"
 
 export type GenerateSummaryResult =
@@ -20,8 +20,9 @@ export type GenerateSummaryResult =
  * constraint causes us to upsert.
  */
 export async function generateDailySummary(): Promise<GenerateSummaryResult> {
-  if (!readAIEnv().configured) {
-    return { ok: false, error: "OpenRouter is not configured." }
+  const ai = readAIEnv()
+  if (!ai.configured) {
+    return { ok: false, error: aiUnavailableMessage(ai) }
   }
 
   const supabase = await createClient()
