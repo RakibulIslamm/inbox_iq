@@ -1,7 +1,7 @@
 import type { Metadata } from "next"
 import Link from "next/link"
 import { redirect } from "next/navigation"
-import { CalendarDays, CreditCard, Inbox, InboxIcon, LayoutDashboard, LogOut } from "lucide-react"
+import { CalendarDays, CreditCard, Inbox, LayoutDashboard, ListChecks, LogOut } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { SetupRequired } from "@/components/setup-required"
 import { ThemeToggle } from "@/components/theme-toggle"
@@ -51,6 +51,13 @@ export default async function DashboardLayout({
 
   return (
     <div className="flex flex-1 flex-col">
+      {/*
+        Sticky wrapper: keeps the header + mobile nav pinned to the top while
+        long inbox / actions / today lists scroll behind. Translucent
+        background + backdrop-blur mirrors the marketing site's SiteHeader so
+        the visual language is consistent across logged-out and logged-in.
+      */}
+      <div className="sticky top-0 z-30 bg-background/80 backdrop-blur">
       <header className="relative flex items-center justify-between gap-4 border-b border-border px-4 py-3">
         {/* Left: brand */}
         <Link
@@ -82,6 +89,13 @@ export default async function DashboardLayout({
           >
             <CalendarDays className="size-3" />
             Today
+          </Link>
+          <Link
+            href="/dashboard/actions"
+            className="pointer-events-auto flex items-center gap-1 text-muted-foreground hover:text-foreground"
+          >
+            <ListChecks className="size-3" />
+            Actions
           </Link>
           <Link
             href="/dashboard/billing"
@@ -126,6 +140,13 @@ export default async function DashboardLayout({
           Today
         </Link>
         <Link
+          href="/dashboard/actions"
+          className="flex items-center gap-1 text-muted-foreground hover:text-foreground"
+        >
+          <ListChecks className="size-3" />
+          Actions
+        </Link>
+        <Link
           href="/dashboard/billing"
           className="flex items-center gap-1 text-muted-foreground hover:text-foreground"
         >
@@ -133,6 +154,7 @@ export default async function DashboardLayout({
           Billing
         </Link>
       </nav>
+      </div>
 
       <main className="flex flex-1 flex-col">{children}</main>
     </div>

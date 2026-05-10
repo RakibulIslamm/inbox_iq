@@ -14,6 +14,8 @@ import { cn } from "@/lib/utils"
 import { readAIEnv } from "@/lib/ai/env"
 import { createClient } from "@/lib/supabase/server"
 import { ReplyForm } from "./reply-form"
+import { NoReplyCard } from "./no-reply-card"
+import type { NoReplyReason } from "@/lib/ai/agents/classifier"
 
 type RouteParams = Promise<{ id: string }>
 
@@ -43,7 +45,7 @@ export default async function EmailDetailPage({
   const { data: email } = await supabase
     .from("emails")
     .select(
-      "id, subject, sender, to_header, cc_header, snippet, body, category, urgency_score, summary, action_items, draft_reply, received_at, replied_at"
+      "id, subject, sender, to_header, cc_header, snippet, body, category, urgency_score, summary, action_items, draft_reply, received_at, replied_at, reply_required, no_reply_reason, action_type"
     )
     .eq("id", numericId)
     .eq("user_id", user.id)
@@ -165,24 +167,37 @@ export default async function EmailDetailPage({
         </Card>
       ) : null}
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Reply</CardTitle>
-          <CardDescription>
-            Edit the draft, regenerate with a different tone, then send via
-            your Gmail account.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <ReplyForm
-            emailId={email.id}
-            initialDraft={email.draft_reply ?? ""}
-            alreadyReplied={Boolean(email.replied_at)}
-            aiConfigured={aiConfigured}
-            aiReason={aiReason}
-          />
-        </CardContent>
-      </Card>
+      {email.reply_required === false ? (
+        <NoReplyCard
+          emailId={email.id}
+          noReplyReason={email.no_reply_reason as NoReplyReason | null}
+          initialDraft={email.draft_reply ?? ""}
+          alreadyReplied={Boolean(email.replied_at)}
+          aiConfigured={aiConfigured}
+          aiReason={aiReason}
+        />
+      ) : (
+        <Card>
+          <CardHeader>
+            <CardTitle>Reply</CardTitle>
+            <CardDescription>
+              Edit the draft, regenerate with a different tone, then send via
+              your Gmail account.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <ReplyForm
+              emailId={email.id}
+              initialDraft={email.draft_reply ?? ""}
+              alreadyReplied={Boolean(email.replied_at)}
+              aiConfigured={aiConfigured}
+              aiReason={aiReason}
+              replyRequired={email.reply_required ?? true}
+              noReplyReason={email.no_reply_reason as NoReplyReason | null}
+            />
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardHeader>

@@ -10,6 +10,29 @@ export const EMAIL_CATEGORIES = [
   "personal",
 ] as const
 
+export const NO_REPLY_REASONS = [
+  "no_reply_sender",
+  "automated",
+  "fyi",
+  "newsletter",
+  "marketing",
+  "receipt",
+] as const
+
+export const ACTION_TYPES = [
+  "reply",
+  "review",
+  "pay",
+  "sign",
+  "schedule",
+  "track",
+  "read",
+  "none",
+] as const
+
+export type ActionType = (typeof ACTION_TYPES)[number]
+export type NoReplyReason = (typeof NO_REPLY_REASONS)[number]
+
 export const classificationSchema = z.object({
   category: z.enum(EMAIL_CATEGORIES),
   urgency_score: z.number().int().min(1).max(10),
@@ -17,6 +40,12 @@ export const classificationSchema = z.object({
   action_items: z.array(z.string().min(1).max(280)).max(3),
   // null when no reply is expected (newsletters, FYI, marketing).
   draft_reply: z.string().nullable(),
+  // True iff a human is genuinely waiting on the user's words.
+  reply_required: z.boolean(),
+  // Required when reply_required is false; null when true.
+  no_reply_reason: z.enum(NO_REPLY_REASONS).nullable(),
+  // Primary action category for the /dashboard/actions page.
+  action_type: z.enum(ACTION_TYPES),
 })
 
 export type Classification = z.infer<typeof classificationSchema>
@@ -53,6 +82,22 @@ For each email you receive, you must call the \`classify_email\` tool exactly on
   - If the email asks a yes/no, answer it. If it asks for a time, propose one. If you don't have the info, ask exactly the question you'd need.
   - Match the sender's register and language. Plain text. No "[Your name]" placeholders.
 
+- reply_required: true if a human is genuinely waiting on the user's words. Set false for newsletters, automated alerts, no-reply senders (the From address contains "noreply"/"no-reply"/"do-not-reply"/"notifications"/"alerts@"), shipping confirmations, receipts, marketing, and pure-FYI mail with no question. When false, draft_reply MUST be null.
+
+- no_reply_reason: short tag explaining why no reply is needed. Required when reply_required is false; null when true. Pick the most specific one of: "no_reply_sender" (From is a no-reply mailbox), "automated" (system-generated alert/report), "fyi" (a human sent it but only to inform), "newsletter", "marketing", "receipt" (purchase/payment/shipping confirmation).
+
+- action_type: the single primary action this email demands. Pick exactly one of:
+  - reply — a human is waiting on a written response (use unless a more specific verb fits, e.g. a meeting request goes to "schedule", not "reply").
+  - review — read carefully and decide; no reply yet (PR review requests, design docs, contracts to skim).
+  - pay — money out (invoices, payment failures, subscription renewals, reimbursements).
+  - sign — e-signature or formal acceptance (NDAs, offers, ToS).
+  - schedule — calendar coordination (meeting requests, RSVPs, reschedules, time-slot polls).
+  - track — passive watch (shipment, delivery, flight, order status).
+  - read — read-and-file FYI worth keeping.
+  - none — pure noise the user can safely ignore.
+
+  Consistency: if reply_required is true, action_type ∈ {reply, schedule, sign, pay, review} — never "none" or "read". If reply_required is false, action_type ∈ {review, pay, sign, schedule, track, read, none}; "reply" is forbidden.
+
 Return only via the tool call. Do not produce any other text.`
 
 const TOOL_PARAMETERS = {
@@ -84,8 +129,33 @@ const TOOL_PARAMETERS = {
       description:
         "Ready-to-send reply, or null if no reply is expected.",
     },
+    reply_required: {
+      type: "boolean",
+      description:
+        "True iff a human is genuinely waiting on the user's words. False for newsletters, automated alerts, no-reply senders, FYI mail.",
+    },
+    no_reply_reason: {
+      type: ["string", "null"],
+      enum: [...NO_REPLY_REASONS, null],
+      description:
+        "Why no reply is needed. Required when reply_required is false; null when true.",
+    },
+    action_type: {
+      type: "string",
+      enum: [...ACTION_TYPES],
+      description: "Primary action this email requires.",
+    },
   },
-  required: ["category", "urgency_score", "summary", "action_items", "draft_reply"],
+  required: [
+    "category",
+    "urgency_score",
+    "summary",
+    "action_items",
+    "draft_reply",
+    "reply_required",
+    "no_reply_reason",
+    "action_type",
+  ],
   additionalProperties: false,
 } as const
 
@@ -132,7 +202,25 @@ export async function classifyEmail(
     )
   }
 
-  return classificationSchema.parse(raw)
+  const parsed = classificationSchema.parse(raw)
+
+  // Defensive invariant: if the model says no reply is required, the draft must
+  // be null. The system prompt forbids the violation, but cheap to enforce
+  // server-side rather than discover via a confusing UI later.
+  if (!parsed.reply_required && parsed.draft_reply !== null) {
+    parsed.draft_reply = null
+  }
+  // And the inverse: a missing no_reply_reason when no reply is required is a
+  // contract violation we'd rather coerce than surface as a Postgres CHECK
+  // failure. Default to "fyi" — the broadest bucket.
+  if (!parsed.reply_required && parsed.no_reply_reason === null) {
+    parsed.no_reply_reason = "fyi"
+  }
+  if (parsed.reply_required && parsed.no_reply_reason !== null) {
+    parsed.no_reply_reason = null
+  }
+
+  return parsed
 }
 
 function formatEmail(input: ClassifierInput): string {

@@ -2,16 +2,16 @@
 
 import { revalidatePath } from "next/cache"
 import {
-  classifyEmail,
-  type Classification,
-} from "@/lib/ai/agents/classifier"
+  actionizeEmail,
+  type Actionization,
+} from "@/lib/ai/agents/actionizer"
 import { aiUnavailableMessage, readAIEnv } from "@/lib/ai/env"
 import { createClient } from "@/lib/supabase/server"
 
 const FREE_TIER_DAILY_LIMIT = 10
 const CONCURRENCY = 5
 
-export type ProcessResult =
+export type ActionizeResult =
   | {
       ok: true
       processed: number
@@ -26,11 +26,16 @@ export type ProcessResult =
     }
 
 /**
- * Classify all of the user's currently-unprocessed emails. Concurrency is
- * capped at 5; free-tier users are capped to 10 classifications per
- * calendar day (UTC), enforced via `processed_at`.
+ * Backfill `reply_required`, `no_reply_reason`, and `action_type` for emails
+ * that were classified before those columns existed. Only touches rows where
+ * `category IS NOT NULL AND action_type IS NULL` — disjoint from the Process
+ * button's "category IS NULL" set, so the two can run concurrently without
+ * collisions.
+ *
+ * Counts against the same 10/day free quota as `processEmails` to keep the
+ * accounting simple.
  */
-export async function processEmails(): Promise<ProcessResult> {
+export async function actionizeEmails(): Promise<ActionizeResult> {
   const ai = readAIEnv()
   if (!ai.configured) {
     return { ok: false, error: aiUnavailableMessage(ai) }
@@ -77,46 +82,49 @@ export async function processEmails(): Promise<ProcessResult> {
 
   let query = supabase
     .from("emails")
-    .select("id, subject, sender, snippet, body")
+    .select("id, subject, sender, category, summary, action_items, draft_reply")
     .eq("user_id", user.id)
-    .is("category", null)
+    .not("category", "is", null)
+    .is("action_type", null)
+    .order("urgency_score", { ascending: false, nullsFirst: false })
     .order("received_at", { ascending: false, nullsFirst: false })
 
   if (remaining !== null) query = query.limit(remaining)
 
-  const { data: unprocessed, error: queryError } = await query
+  const { data: rows, error: queryError } = await query
   if (queryError) return { ok: false, error: queryError.message }
-  if (!unprocessed || unprocessed.length === 0) {
+  if (!rows || rows.length === 0) {
     return { ok: true, processed: 0, failed: 0, remaining, plan }
   }
 
-  type ClassifyOutcome =
-    | { id: number; classification: Classification; error: null }
-    | { id: number; classification: null; error: string }
+  type Outcome =
+    | { id: number; result: Actionization; error: null }
+    | { id: number; result: null; error: string }
 
-  const outcomes = await runWithConcurrency<typeof unprocessed[number], ClassifyOutcome>(
-    unprocessed,
+  const outcomes = await runWithConcurrency<typeof rows[number], Outcome>(
+    rows,
     CONCURRENCY,
-    async (email) => {
+    async (row) => {
       try {
-        const classification = await classifyEmail({
-          subject: email.subject,
-          sender: email.sender,
-          body: email.body,
-          snippet: email.snippet,
+        const result = await actionizeEmail({
+          subject: row.subject,
+          sender: row.sender,
+          category: row.category,
+          summary: row.summary,
+          action_items: (row.action_items as string[] | null) ?? [],
+          has_draft: row.draft_reply !== null,
         })
-        return { id: email.id, classification, error: null }
+        return { id: row.id, result, error: null }
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e)
-        console.error(`[ai] classify failed for email ${email.id}: ${msg}`)
-        return { id: email.id, classification: null, error: msg }
+        console.error(`[ai] actionize failed for email ${row.id}: ${msg}`)
+        return { id: row.id, result: null, error: msg }
       }
     }
   )
 
   const successes = outcomes.filter(
-    (o): o is Extract<ClassifyOutcome, { classification: Classification }> =>
-      o.classification !== null
+    (o): o is Extract<Outcome, { result: Actionization }> => o.result !== null
   )
 
   let processed = 0
@@ -125,20 +133,14 @@ export async function processEmails(): Promise<ProcessResult> {
       const { error: updateError } = await supabase
         .from("emails")
         .update({
-          category: s.classification.category,
-          urgency_score: s.classification.urgency_score,
-          summary: s.classification.summary,
-          action_items: s.classification.action_items,
-          draft_reply: s.classification.draft_reply,
-          reply_required: s.classification.reply_required,
-          no_reply_reason: s.classification.no_reply_reason,
-          action_type: s.classification.action_type,
-          processed_at: new Date().toISOString(),
+          reply_required: s.result.reply_required,
+          no_reply_reason: s.result.no_reply_reason,
+          action_type: s.result.action_type,
         })
         .eq("id", s.id)
         .eq("user_id", user.id)
       if (updateError) {
-        console.error(`[ai] update failed for email ${s.id}:`, {
+        console.error(`[ai] actionize update failed for email ${s.id}:`, {
           message: updateError.message,
           code: updateError.code,
           details: updateError.details,
@@ -152,6 +154,7 @@ export async function processEmails(): Promise<ProcessResult> {
   const failed = outcomes.length - processed
   const newRemaining = remaining !== null ? Math.max(0, remaining - processed) : null
 
+  revalidatePath("/dashboard/actions")
   revalidatePath("/dashboard")
 
   return {

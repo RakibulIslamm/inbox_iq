@@ -8,6 +8,7 @@ import {
   regenerateDraft,
   sendReply,
 } from "@/app/actions/email"
+import type { NoReplyReason } from "@/lib/ai/agents/classifier"
 
 const TONES: { label: string; value: "shorter" | "longer" | "more-formal" | "more-casual" }[] = [
   { label: "Shorter", value: "shorter" },
@@ -28,12 +29,15 @@ export function ReplyForm({
   alreadyReplied,
   aiConfigured,
   aiReason,
+  replyRequired = true,
 }: {
   emailId: number
   initialDraft: string
   alreadyReplied: boolean
   aiConfigured: boolean
   aiReason: "disabled" | "missing" | null
+  replyRequired?: boolean
+  noReplyReason?: NoReplyReason | null
 }) {
   const [body, setBody] = useState(initialDraft)
   const [status, setStatus] = useState<Status>({ kind: "idle" })
@@ -85,11 +89,13 @@ export function ReplyForm({
         disabled={pending}
         className="w-full resize-y rounded-none border border-input bg-transparent px-2.5 py-2 font-sans text-xs leading-relaxed outline-none focus-visible:border-ring focus-visible:ring-1 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-input/30"
         placeholder={
-          aiConfigured
-            ? "Click Regenerate to draft a reply, or write your own here."
-            : aiReason === "disabled"
-              ? "Write your reply here. (AI drafting is disabled for this deployment.)"
-              : "Write your reply here. (Set OPENROUTER_API_KEY to enable AI drafting.)"
+          !replyRequired
+            ? "InboxIQ didn't draft this — write a reply if you'd still like to send one."
+            : aiConfigured
+              ? "Click Regenerate to draft a reply, or write your own here."
+              : aiReason === "disabled"
+                ? "Write your reply here. (AI drafting is disabled for this deployment.)"
+                : "Write your reply here. (Set OPENROUTER_API_KEY to enable AI drafting.)"
         }
       />
 

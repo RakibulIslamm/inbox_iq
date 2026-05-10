@@ -32,7 +32,7 @@ export async function sendReply(input: SendReplyInput): Promise<SendReplyResult>
 
   const { data: row, error } = await supabase
     .from("emails")
-    .select("id, sender, subject, message_id_header, thread_id")
+    .select("id, sender, subject, message_id_header, thread_id, action_type")
     .eq("id", input.emailId)
     .eq("user_id", user.id)
     .maybeSingle()
@@ -51,14 +51,22 @@ export async function sendReply(input: SendReplyInput): Promise<SendReplyResult>
       body: input.body,
     })
 
+    const now = new Date().toISOString()
+    // Drain the actions list naturally: once the user actually replies, mark
+    // a "reply" action as done so the email leaves the open-actions bucket.
+    // Other action_types (pay, sign, …) need an explicit checkbox toggle.
+    const update: { replied_at: string; action_done_at?: string } = { replied_at: now }
+    if (row.action_type === "reply") update.action_done_at = now
+
     await supabase
       .from("emails")
-      .update({ replied_at: new Date().toISOString() })
+      .update(update)
       .eq("id", row.id)
       .eq("user_id", user.id)
 
     revalidatePath(`/dashboard/emails/${row.id}`)
     revalidatePath("/dashboard")
+    revalidatePath("/dashboard/actions")
 
     return { ok: true, messageId: result.messageId }
   } catch (e) {
