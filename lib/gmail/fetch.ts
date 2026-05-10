@@ -1,4 +1,5 @@
 import type { gmail_v1 } from "googleapis"
+import type { SupabaseClient } from "@supabase/supabase-js"
 import {
   getGmailClient,
   GmailReauthRequiredError,
@@ -7,8 +8,12 @@ import {
 
 export type SimplifiedEmail = {
   gmailMessageId: string
+  threadId: string | null
+  messageIdHeader: string | null
   subject: string | null
   sender: string | null
+  to: string | null
+  cc: string | null
   snippet: string | null
   body: string | null
   receivedAt: Date | null
@@ -23,9 +28,10 @@ const MAX_BODY_CHARS = 50_000
  */
 export async function fetchRecentEmails(
   userId: string,
-  limit = 50
+  limit = 50,
+  supabase?: SupabaseClient
 ): Promise<SimplifiedEmail[]> {
-  const gmail = await getGmailClient(userId)
+  const gmail = await getGmailClient(userId, supabase)
 
   let listResponse: gmail_v1.Schema$ListMessagesResponse
   try {
@@ -73,6 +79,9 @@ function parseEmailMessage(msg: gmail_v1.Schema$Message): SimplifiedEmail | null
 
   const subject = getHeader("Subject")
   const sender = getHeader("From")
+  const to = getHeader("To")
+  const cc = getHeader("Cc")
+  const messageIdHeader = getHeader("Message-ID") ?? getHeader("Message-Id")
   const dateHeader = getHeader("Date")
   const internalDate = msg.internalDate ? Number(msg.internalDate) : null
 
@@ -87,8 +96,12 @@ function parseEmailMessage(msg: gmail_v1.Schema$Message): SimplifiedEmail | null
 
   return {
     gmailMessageId: msg.id,
+    threadId: msg.threadId ?? null,
+    messageIdHeader,
     subject,
     sender,
+    to,
+    cc,
     snippet: msg.snippet ?? null,
     body,
     receivedAt: receivedAt && !isNaN(receivedAt.getTime()) ? receivedAt : null,

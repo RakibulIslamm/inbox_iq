@@ -3,11 +3,14 @@ import { google } from "googleapis"
 import { readGmailEnv, GMAIL_SETUP_MESSAGE } from "./env"
 
 /**
- * Read-only access is enough for triage. Phase 3+ may add gmail.modify
- * if we want to apply labels or move messages.
+ * Phase 2 used readonly only. Phase 4 adds `gmail.send` so we can ship
+ * AI-drafted replies. Existing users will be re-prompted by Google when
+ * they next click Connect Gmail (because of the new scope), thanks to
+ * `prompt=consent` + `include_granted_scopes=true` in `buildConsentUrl`.
  */
 export const GMAIL_SCOPES = [
   "https://www.googleapis.com/auth/gmail.readonly",
+  "https://www.googleapis.com/auth/gmail.send",
 ] as const
 
 export const GMAIL_STATE_COOKIE = "inboxiq_gmail_oauth_state"

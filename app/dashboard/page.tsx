@@ -351,62 +351,71 @@ function EmailItem({ email }: { email: EmailRow }) {
   const showActions = (email.action_items?.length ?? 0) > 0
 
   return (
-    <li className="flex flex-col gap-2 px-4 py-3">
-      <div className="flex items-start gap-3">
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <span className="truncate text-xs font-medium">
-              {email.sender ?? "(unknown sender)"}
-            </span>
-            <span className="ml-auto shrink-0 text-xs text-muted-foreground">
-              {dateLabel}
-            </span>
+    <li className="px-4 py-3">
+      {/* Whole row links to the detail page, except the draft-reply
+          <details> block at the bottom (nested interactive elements). */}
+      <Link
+        href={`/dashboard/emails/${email.id}`}
+        className="block group space-y-2"
+      >
+        <div className="flex items-start gap-3">
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2">
+              <span className="truncate text-xs font-medium">
+                {email.sender ?? "(unknown sender)"}
+              </span>
+              <span className="ml-auto shrink-0 text-xs text-muted-foreground">
+                {dateLabel}
+              </span>
+            </div>
+            <p className="truncate text-xs group-hover:underline">
+              {email.subject ?? "(no subject)"}
+            </p>
           </div>
-          <p className="truncate text-xs">{email.subject ?? "(no subject)"}</p>
+          <div className="flex shrink-0 flex-col items-end gap-1">
+            {email.urgency_score != null ? (
+              <span className="text-xs font-medium tabular-nums">
+                {email.urgency_score}/10
+              </span>
+            ) : null}
+            {email.category ? (
+              <Badge
+                variant="outline"
+                className={cn("uppercase", tone ?? undefined)}
+              >
+                {email.category}
+              </Badge>
+            ) : (
+              <Badge variant="outline">Not yet processed</Badge>
+            )}
+          </div>
         </div>
-        <div className="flex shrink-0 flex-col items-end gap-1">
-          {email.urgency_score != null ? (
-            <span className="text-xs font-medium tabular-nums">
-              {email.urgency_score}/10
-            </span>
-          ) : null}
-          {email.category ? (
-            <Badge
-              variant="outline"
-              className={cn("uppercase", tone ?? undefined)}
-            >
-              {email.category}
-            </Badge>
-          ) : (
-            <Badge variant="outline">Not yet processed</Badge>
-          )}
-        </div>
-      </div>
 
-      {showSummary ? (
-        <p className="text-xs text-muted-foreground">{email.summary}</p>
-      ) : email.snippet ? (
-        <p className="line-clamp-2 text-xs text-muted-foreground">
-          {email.snippet}
-        </p>
-      ) : null}
+        {showSummary ? (
+          <p className="text-xs text-muted-foreground">{email.summary}</p>
+        ) : email.snippet ? (
+          <p className="line-clamp-2 text-xs text-muted-foreground">
+            {email.snippet}
+          </p>
+        ) : null}
 
-      {showActions ? (
-        <ul className="space-y-0.5">
-          {email.action_items!.map((item, i) => (
-            <li
-              key={`${email.id}-action-${i}`}
-              className="flex gap-1.5 text-xs text-muted-foreground"
-            >
-              <span className="shrink-0">→</span>
-              <span>{item}</span>
-            </li>
-          ))}
-        </ul>
-      ) : null}
+        {showActions ? (
+          <ul className="space-y-0.5">
+            {email.action_items!.map((item, i) => (
+              <li
+                key={`${email.id}-action-${i}`}
+                className="flex gap-1.5 text-xs text-muted-foreground"
+              >
+                <span className="shrink-0">→</span>
+                <span>{item}</span>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+      </Link>
 
       {email.draft_reply ? (
-        <details className="text-xs">
+        <details className="mt-2 text-xs">
           <summary className="cursor-pointer text-muted-foreground hover:text-foreground">
             View draft reply
           </summary>

@@ -1,6 +1,13 @@
+import type { Metadata } from "next"
 import Link from "next/link"
 import { redirect } from "next/navigation"
 import { Inbox } from "lucide-react"
+
+export const metadata: Metadata = {
+  title: "Sign in",
+  description:
+    "Sign in to InboxIQ with email magic link or Google to triage your inbox with AI.",
+}
 import {
   Card,
   CardContent,

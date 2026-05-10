@@ -50,8 +50,12 @@ export async function syncEmails(): Promise<SyncResult> {
   const rows = messages.map((m) => ({
     user_id: user.id,
     gmail_message_id: m.gmailMessageId,
+    thread_id: m.threadId,
+    message_id_header: m.messageIdHeader,
     subject: m.subject,
     sender: m.sender,
+    to_header: m.to,
+    cc_header: m.cc,
     snippet: m.snippet,
     body: m.body,
     received_at: m.receivedAt ? m.receivedAt.toISOString() : null,

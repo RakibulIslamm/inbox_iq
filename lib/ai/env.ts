@@ -8,7 +8,7 @@ export type AIEnv = {
  * providers without code changes — set OPENROUTER_API_KEY and the slug below
  * routes to whatever Anthropic endpoint OpenRouter exposes.
  */
-export const DEFAULT_AI_MODEL = "deepseek/deepseek-v4-pro"
+export const DEFAULT_AI_MODEL = "deepseek/deepseek-v3.2"
 
 export function readAIEnv():
   | { configured: true; env: AIEnv }
