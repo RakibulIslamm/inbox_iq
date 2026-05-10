@@ -1,7 +1,7 @@
 import type { Metadata } from "next"
 import Link from "next/link"
 import { redirect } from "next/navigation"
-import { CalendarDays, CreditCard, Inbox, LogOut } from "lucide-react"
+import { CalendarDays, CreditCard, Inbox, InboxIcon, LayoutDashboard, LogOut } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { SetupRequired } from "@/components/setup-required"
 import { ThemeToggle } from "@/components/theme-toggle"
@@ -51,7 +51,7 @@ export default async function DashboardLayout({
 
   return (
     <div className="flex flex-1 flex-col">
-      <header className="flex items-center gap-4 border-b border-border px-4 py-3">
+      <header className="relative flex items-center justify-between gap-4 border-b border-border px-4 py-3">
         {/* Left: brand */}
         <Link
           href="/dashboard"
@@ -61,24 +61,31 @@ export default async function DashboardLayout({
           <span>InboxIQ</span>
         </Link>
 
-        {/* Center: nav (flex-1 + justify-center) */}
-        <nav className="flex flex-1 items-center justify-center gap-4 text-xs">
+        {/*
+          Center: nav — absolutely positioned at the viewport center so the
+          links sit at the canvas midpoint regardless of how wide the left
+          (brand) or right (user-info) clusters are. Hidden on small screens
+          where there isn't room to overlap; falls back to a compact layout
+          beneath the header on mobile.
+        */}
+        <nav className="pointer-events-none absolute left-1/2 top-1/2 hidden -translate-x-1/2 -translate-y-1/2 items-center gap-4 text-xs sm:flex">
           <Link
             href="/dashboard"
-            className="text-muted-foreground hover:text-foreground"
+            className="pointer-events-auto flex items-center gap-1 text-muted-foreground hover:text-foreground"
           >
+            <LayoutDashboard className="size-3" />
             Inbox
           </Link>
           <Link
             href="/dashboard/today"
-            className="flex items-center gap-1 text-muted-foreground hover:text-foreground"
+            className="pointer-events-auto flex items-center gap-1 text-muted-foreground hover:text-foreground"
           >
             <CalendarDays className="size-3" />
             Today
           </Link>
           <Link
             href="/dashboard/billing"
-            className="flex items-center gap-1 text-muted-foreground hover:text-foreground"
+            className="pointer-events-auto flex items-center gap-1 text-muted-foreground hover:text-foreground"
           >
             <CreditCard className="size-3" />
             Billing
@@ -102,6 +109,30 @@ export default async function DashboardLayout({
           </form>
         </div>
       </header>
+
+      {/* Mobile nav — visible only when the absolute nav above is hidden. */}
+      <nav className="flex items-center justify-center gap-4 border-b border-border px-4 py-2 text-xs sm:hidden">
+        <Link
+          href="/dashboard"
+          className="text-muted-foreground hover:text-foreground"
+        >
+          Inbox
+        </Link>
+        <Link
+          href="/dashboard/today"
+          className="flex items-center gap-1 text-muted-foreground hover:text-foreground"
+        >
+          <CalendarDays className="size-3" />
+          Today
+        </Link>
+        <Link
+          href="/dashboard/billing"
+          className="flex items-center gap-1 text-muted-foreground hover:text-foreground"
+        >
+          <CreditCard className="size-3" />
+          Billing
+        </Link>
+      </nav>
 
       <main className="flex flex-1 flex-col">{children}</main>
     </div>
