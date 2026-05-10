@@ -14,7 +14,19 @@ import { readGmailEnv } from "@/lib/gmail/env"
 import { createClient } from "@/lib/supabase/server"
 
 export type SyncResult =
-  | { ok: true; synced: number; skipped: number }
+  | {
+      ok: true
+      /** Truly new rows inserted (gmail_message_id wasn't in DB yet). */
+      synced: number
+      /** Existing rows the sync re-touched (already in DB, fields refreshed). */
+      updated: number
+      /** Total `category IS NULL` rows across the user's inbox after the
+       *  sync — i.e. how many are now waiting for the Process button. Lets
+       *  the toast distinguish "Synced 5, 3 ready to classify" from
+       *  "Synced 5, but they're all duplicates of already-classified mail". */
+      unprocessed: number
+      skipped: number
+    }
   | { ok: false; error: string; reauth?: boolean; notConnected?: boolean }
 
 /**
@@ -89,6 +101,18 @@ export async function syncEmails(): Promise<SyncResult> {
     return { ok: false, error: msg }
   }
 
+  // Always tell the user how many rows are sitting unprocessed after the
+  // sync — that's the count Process will actually classify. Computed once
+  // at the end via this helper to keep both return paths consistent.
+  const countUnprocessed = async (): Promise<number> => {
+    const { count: pending } = await supabase
+      .from("emails")
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", user.id)
+      .is("category", null)
+    return pending ?? 0
+  }
+
   if (messages.length === 0) {
     // Still bump the watermark — there's nothing new but the sync ran.
     await supabase
@@ -96,7 +120,13 @@ export async function syncEmails(): Promise<SyncResult> {
       .update({ last_synced_at: newWatermark.toISOString() })
       .eq("id", user.id)
     revalidatePath("/dashboard")
-    return { ok: true, synced: 0, skipped: 0 }
+    return {
+      ok: true,
+      synced: 0,
+      updated: 0,
+      unprocessed: await countUnprocessed(),
+      skipped: 0,
+    }
   }
 
   const rows = messages.map((m) => ({
@@ -113,17 +143,33 @@ export async function syncEmails(): Promise<SyncResult> {
     received_at: m.receivedAt ? m.receivedAt.toISOString() : null,
   }))
 
+  // Pre-query existing gmail_message_ids in this batch so we can report
+  // truly-new vs. re-touched separately. Without this, `count` from
+  // upsert lumps inserts and ON CONFLICT updates together, which makes
+  // "Synced 5" look promising even when all 5 are already-classified
+  // rows that the Process button will skip.
+  const incomingIds = rows.map((r) => r.gmail_message_id)
+  const { data: existingRows } = await supabase
+    .from("emails")
+    .select("gmail_message_id")
+    .eq("user_id", user.id)
+    .in("gmail_message_id", incomingIds)
+  const existingIdSet = new Set(
+    (existingRows ?? []).map((r) => r.gmail_message_id as string)
+  )
+  const newCount = incomingIds.filter((id) => !existingIdSet.has(id)).length
+  const updatedCount = incomingIds.length - newCount
+
   // Upsert against (user_id, gmail_message_id). New rows get processed_at via
   // the column default. Existing rows keep their processed_at (we omit it
   // from the payload), and their AI fields (category/summary/etc.) stay
   // untouched. processed_at is overwritten only by the AI processor in
   // app/actions/process.ts, which is what the daily-quota check reads.
-  const { error: upsertError, count } = await supabase
+  const { error: upsertError } = await supabase
     .from("emails")
     .upsert(rows, {
       onConflict: "user_id,gmail_message_id",
       ignoreDuplicates: false,
-      count: "exact",
     })
 
   if (upsertError) {
@@ -146,7 +192,9 @@ export async function syncEmails(): Promise<SyncResult> {
   revalidatePath("/dashboard")
   return {
     ok: true,
-    synced: count ?? rows.length,
+    synced: newCount,
+    updated: updatedCount,
+    unprocessed: await countUnprocessed(),
     skipped: messages.length - rows.length,
   }
 }

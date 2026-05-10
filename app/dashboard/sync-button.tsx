@@ -21,11 +21,27 @@ export function SyncButton() {
     if (!state || state === lastReported.current) return
     lastReported.current = state
     if (state.ok) {
+      // Build a description that explains the sync→process gap. The common
+      // confusion: "Synced 5" but Process says "Classified 0" because the 5
+      // were already-classified duplicates. Now we say so up front.
+      const headline =
+        state.synced > 0
+          ? `Synced ${state.synced} new ${state.synced === 1 ? "email" : "emails"}.`
+          : state.updated > 0
+            ? `No new emails — ${state.updated} already in inbox.`
+            : "No new emails."
+      const parts: string[] = []
+      if (state.unprocessed > 0) {
+        parts.push(
+          `${state.unprocessed} ready to process`
+        )
+      } else if (state.synced === 0 && state.updated > 0) {
+        parts.push("Everything is already classified")
+      }
+      if (state.skipped > 0) parts.push(`${state.skipped} unparseable`)
       toast.success(
-        `Synced ${state.synced} ${state.synced === 1 ? "email" : "emails"}.`,
-        state.skipped > 0
-          ? { description: `Skipped ${state.skipped} unparseable.` }
-          : undefined
+        headline,
+        parts.length > 0 ? { description: parts.join(" · ") } : undefined
       )
     } else {
       toast.error(state.error)
