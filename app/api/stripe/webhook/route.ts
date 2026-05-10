@@ -2,6 +2,10 @@ import { NextResponse, type NextRequest } from "next/server"
 import type Stripe from "stripe"
 import { createStripeClient } from "@/lib/stripe/client"
 import { readStripeEnv } from "@/lib/stripe/env"
+import {
+  extractSubscriptionState,
+  type SubscriptionState,
+} from "@/lib/stripe/subscription"
 import { createAdminClient } from "@/lib/supabase/admin"
 
 /**
@@ -89,8 +93,9 @@ async function handleCheckoutCompleted(
   }
 
   // Pull the subscription to read its status — checkout sometimes returns
-  // before the subscription is fully provisioned, so default to 'pro' optimistically.
-  let plan: "free" | "pro" = "pro"
+  // before the subscription is fully provisioned, so default to 'pro'
+  // optimistically when retrieve fails.
+  let state = optimisticState()
   if (session.subscription) {
     const subscriptionId =
       typeof session.subscription === "string"
@@ -98,15 +103,18 @@ async function handleCheckoutCompleted(
         : session.subscription.id
     try {
       const sub = await stripe.subscriptions.retrieve(subscriptionId)
-      plan = subscriptionIsActive(sub.status) ? "pro" : "free"
+      state = extractSubscriptionState(sub)
     } catch (e) {
-      console.warn("[stripe] could not retrieve subscription, defaulting to pro:", e)
+      console.warn(
+        "[stripe] could not retrieve subscription, defaulting to pro:",
+        e
+      )
     }
   }
 
   const { error } = await admin
     .from("profiles")
-    .update({ plan, stripe_customer_id: customerId })
+    .update({ ...state, stripe_customer_id: customerId })
     .eq("id", userId)
   if (error) {
     throw new Error(`profiles update failed: ${error.message}`)
@@ -122,13 +130,9 @@ async function handleSubscriptionChange(
       ? subscription.customer
       : subscription.customer.id
 
-  const plan: "free" | "pro" = subscriptionIsActive(subscription.status)
-    ? "pro"
-    : "free"
-
   const { error } = await admin
     .from("profiles")
-    .update({ plan })
+    .update(extractSubscriptionState(subscription))
     .eq("stripe_customer_id", customerId)
   if (error) {
     throw new Error(`profiles update failed: ${error.message}`)
@@ -146,15 +150,24 @@ async function handleSubscriptionDeleted(
 
   const { error } = await admin
     .from("profiles")
-    .update({ plan: "free" })
+    .update({
+      plan: "free",
+      subscription_status: subscription.status, // typically 'canceled'
+      cancel_at_period_end: false,
+      current_period_end: null,
+    })
     .eq("stripe_customer_id", customerId)
   if (error) {
     throw new Error(`profiles update failed: ${error.message}`)
   }
 }
 
-function subscriptionIsActive(status: Stripe.Subscription.Status): boolean {
-  // 'active' = paying. 'trialing' = inside a trial. 'past_due' still has
-  // access while Stripe retries — we keep them on Pro until canceled.
-  return status === "active" || status === "trialing" || status === "past_due"
+/** Optimistic default when retrieve fails on checkout.session.completed. */
+function optimisticState(): SubscriptionState {
+  return {
+    plan: "pro",
+    subscription_status: "active",
+    cancel_at_period_end: false,
+    current_period_end: null,
+  }
 }

@@ -5,6 +5,7 @@ import { ArrowRight, CalendarDays, Mail, Sparkles } from "lucide-react"
 export const metadata: Metadata = { title: "Today" }
 
 import { Badge } from "@/components/ui/badge"
+import { buttonVariants } from "@/components/ui/button"
 import {
   Card,
   CardContent,
@@ -12,6 +13,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
+import { Stat } from "@/components/stat"
 import { cn } from "@/lib/utils"
 import { readAIEnv } from "@/lib/ai/env"
 import { createClient } from "@/lib/supabase/server"
@@ -138,7 +140,9 @@ export default async function TodayPage() {
           <CardTitle>Top urgent today</CardTitle>
           <CardDescription>
             {top3Urgent.length === 0
-              ? "Nothing urgent today. Take a breath."
+              ? todaysEmails.length === 0
+                ? "Nothing classified today yet. Sync + Process from the inbox to see urgent items here."
+                : "Nothing urgent today. Take a breath — everything classified is below 6/10."
               : `Top ${top3Urgent.length} email${top3Urgent.length === 1 ? "" : "s"} ranked by urgency_score.`}
           </CardDescription>
         </CardHeader>
@@ -149,6 +153,15 @@ export default async function TodayPage() {
                 <UrgentRow key={email.id} email={email} />
               ))}
             </ul>
+          </CardContent>
+        ) : todaysEmails.length === 0 ? (
+          <CardContent>
+            <Link
+              href="/dashboard"
+              className={buttonVariants({ variant: "outline", size: "sm" })}
+            >
+              Go to inbox
+            </Link>
           </CardContent>
         ) : null}
       </Card>
@@ -211,15 +224,6 @@ export default async function TodayPage() {
   )
 }
 
-function Stat({ label, value }: { label: string; value: number }) {
-  return (
-    <div className="border border-border px-3 py-3">
-      <p className="text-xs text-muted-foreground">{label}</p>
-      <p className="mt-1 text-2xl font-medium tabular-nums">{value}</p>
-    </div>
-  )
-}
-
 type EmailRow = {
   id: number
   subject: string | null
@@ -257,6 +261,11 @@ function UrgentRow({ email }: { email: EmailRow }) {
             ) : null}
           </div>
           <div className="flex shrink-0 flex-col items-end gap-1">
+            {email.replied_at ? (
+              <Badge variant="outline" className="border-foreground/30">
+                Replied
+              </Badge>
+            ) : null}
             {email.category ? (
               <Badge variant="outline" className={cn("uppercase", tone ?? undefined)}>
                 {email.category}

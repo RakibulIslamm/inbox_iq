@@ -53,7 +53,7 @@ AI inbox assistant that **categorizes**, **scores urgency**, **summarizes**, **d
 - **Next.js 16** (App Router, server actions, route handlers, `proxy.ts` middleware) + **React 19** + **TypeScript** strict
 - **Tailwind v4** + **shadcn/ui** (`base-lyra` style on `@base-ui/react`) + **Lucide** icons + **next-themes** dark mode
 - **Supabase** — Auth (magic link + Google), Postgres + RLS, service-role admin client
-- **OpenRouter** via the `openai` SDK (custom `baseURL`) — defaults to `deepseek/deepseek-v3.2`, swap with one env var
+- **OpenRouter** via the `openai` SDK (custom `baseURL`) — defaults to `deepseek/deepseek-v4-flash`, swap with one env var
 - **googleapis** — Gmail OAuth + read + send (with auto-refresh and threading)
 - **Stripe** — Checkout, Customer Portal, webhook-driven `profiles.plan` sync
 - **Vercel** — host + Cron + Analytics + dynamic OG image
@@ -110,6 +110,7 @@ Open [http://localhost:3000](http://localhost:3000).
    1. [`supabase/migrations/0001_init.sql`](supabase/migrations/0001_init.sql) — base schema (4 tables + RLS + triggers)
    2. [`supabase/migrations/0002_gmail_emails.sql`](supabase/migrations/0002_gmail_emails.sql) — `body`, `received_at`
    3. [`supabase/migrations/0003_email_threading.sql`](supabase/migrations/0003_email_threading.sql) — `thread_id`, `message_id_header`, `to_header`, `cc_header`, `replied_at`
+   4. [`supabase/migrations/0004_profile_extras.sql`](supabase/migrations/0004_profile_extras.sql) — `profiles.name` (auto-derived display name) + subscription state columns (`subscription_status`, `cancel_at_period_end`, `current_period_end`); refreshes `handle_new_user`
 4. **Authentication → URL Configuration** → Site URL `http://localhost:3000`; Redirect URLs add `http://localhost:3000/auth/callback`.
 
 ### 2. Google sign-in (Supabase provider)

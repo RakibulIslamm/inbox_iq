@@ -1,5 +1,11 @@
 import Link from "next/link"
-import { AlertTriangle, CheckCircle2, Mail, Unplug } from "lucide-react"
+import {
+  AlertTriangle,
+  CheckCircle2,
+  Mail,
+  RefreshCw,
+  Unplug,
+} from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button, buttonVariants } from "@/components/ui/button"
 import {
@@ -11,12 +17,14 @@ import {
   CardTitle,
 } from "@/components/ui/card"
 import { Separator } from "@/components/ui/separator"
+import { Stat } from "@/components/stat"
 import { cn } from "@/lib/utils"
 import { disconnectGmail } from "@/app/actions/gmail"
 import { readAIEnv } from "@/lib/ai/env"
 import { readGmailEnv } from "@/lib/gmail/env"
 import { createClient } from "@/lib/supabase/server"
 import { EMAIL_CATEGORIES } from "@/lib/ai/agents/classifier"
+import { LastSync } from "./last-sync"
 import { ProcessButton } from "./process-button"
 import { SyncButton } from "./sync-button"
 
@@ -35,11 +43,12 @@ const ERROR_MESSAGES: Record<string, string> = {
   exchange_failed: "Couldn't exchange the OAuth code with Google. Try again.",
   no_refresh_token:
     "Google didn't return a refresh token. Revoke the app at myaccount.google.com/permissions and reconnect.",
-  persist_failed: "Authorized with Google but couldn't save the connection. Try again.",
+  persist_failed:
+    "Authorized with Google but couldn't save the connection. Try again.",
   access_denied: "You declined the consent screen. Connect when ready.",
 }
 
-const FILTERS: { label: string; value: string | null }[] = [
+const FILTER_DEFS: { label: string; value: string | null }[] = [
   { label: "All", value: null },
   { label: "Urgent", value: "urgent" },
   { label: "Client", value: "client" },
@@ -84,23 +93,71 @@ export default async function DashboardPage({
       ? (params.cat as (typeof EMAIL_CATEGORIES)[number])
       : null
 
+  // Default empty values; populated below when connected.
   let emails: EmailRow[] = []
+  const counts: Record<string, number> = {}
+  let totalClassified = 0
+  let unprocessedCount = 0
+  let urgentCount = 0
+  let repliedTodayCount = 0
+  let lastSyncIso: string | null = null
+
   if (connected) {
-    let q = supabase
+    const dayStart = new Date()
+    dayStart.setHours(0, 0, 0, 0)
+
+    // Fold all stats fetches into ≤ 3 queries:
+    //  1. The visible email list (already needed)
+    //  2. Per-category counts + classified-vs-unclassified buckets
+    //  3. Most-recent processed_at (for LastSync)
+    let listQuery = supabase
       .from("emails")
       .select(
-        "id, subject, sender, snippet, category, urgency_score, summary, action_items, draft_reply, received_at, processed_at"
+        "id, subject, sender, snippet, category, urgency_score, summary, action_items, draft_reply, received_at, processed_at, replied_at"
       )
       .eq("user_id", user.id)
-      // Sort by urgency desc (NULLs last) then by received date.
       .order("urgency_score", { ascending: false, nullsFirst: false })
       .order("received_at", { ascending: false, nullsFirst: false })
       .limit(50)
+    if (activeCategory) listQuery = listQuery.eq("category", activeCategory)
 
-    if (activeCategory) q = q.eq("category", activeCategory)
+    const [listRes, statsRes, syncRes] = await Promise.all([
+      listQuery,
+      supabase
+        .from("emails")
+        .select("category, urgency_score, replied_at")
+        .eq("user_id", user.id),
+      supabase
+        .from("emails")
+        .select("processed_at")
+        .eq("user_id", user.id)
+        .order("processed_at", { ascending: false, nullsFirst: false })
+        .limit(1)
+        .maybeSingle(),
+    ])
 
-    const { data } = await q
-    emails = (data ?? []) as EmailRow[]
+    emails = (listRes.data ?? []) as EmailRow[]
+
+    type StatsRow = {
+      category: string | null
+      urgency_score: number | null
+      replied_at: string | null
+    }
+    const allRows = (statsRes.data ?? []) as StatsRow[]
+    for (const r of allRows) {
+      if (r.category) {
+        counts[r.category] = (counts[r.category] ?? 0) + 1
+        totalClassified += 1
+        if ((r.urgency_score ?? 0) >= 6) urgentCount += 1
+      } else {
+        unprocessedCount += 1
+      }
+      if (r.replied_at && new Date(r.replied_at) >= dayStart) {
+        repliedTodayCount += 1
+      }
+    }
+
+    lastSyncIso = (syncRes.data?.processed_at as string | undefined) ?? null
   }
 
   const successMessage =
@@ -121,15 +178,35 @@ export default async function DashboardPage({
       {!gmailConfigured ? (
         <GmailSetupCard />
       ) : connected ? (
-        <ConnectedCard aiConfigured={aiConfigured} />
+        <ConnectedCard
+          aiConfigured={aiConfigured}
+          lastSyncIso={lastSyncIso}
+        />
       ) : (
         <ConnectCard />
       )}
 
       {connected ? (
         <>
-          <FilterChips active={activeCategory} />
-          <EmailList emails={emails} activeCategory={activeCategory} />
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+            <Stat label="Total classified" value={totalClassified} />
+            <Stat label="Unprocessed" value={unprocessedCount} />
+            <Stat label="Urgent (≥6)" value={urgentCount} />
+            <Stat label="Replied today" value={repliedTodayCount} />
+          </div>
+
+          <FilterChips
+            active={activeCategory}
+            counts={counts}
+            total={totalClassified}
+          />
+
+          <EmailList
+            emails={emails}
+            activeCategory={activeCategory}
+            totalClassified={totalClassified}
+            unprocessedCount={unprocessedCount}
+          />
         </>
       ) : null}
     </div>
@@ -149,7 +226,12 @@ function StatusBanner({
       ? "border-foreground/20 text-foreground"
       : "border-destructive/40 text-destructive"
   return (
-    <div className={cn("flex items-start gap-2 border px-3 py-2 text-xs", className)}>
+    <div
+      className={cn(
+        "flex items-start gap-2 border px-3 py-2 text-xs",
+        className
+      )}
+    >
       <Icon className="mt-0.5 size-3.5 shrink-0" />
       <span>{message}</span>
     </div>
@@ -210,7 +292,13 @@ function ConnectCard() {
   )
 }
 
-function ConnectedCard({ aiConfigured }: { aiConfigured: boolean }) {
+function ConnectedCard({
+  aiConfigured,
+  lastSyncIso,
+}: {
+  aiConfigured: boolean
+  lastSyncIso: string | null
+}) {
   return (
     <Card>
       <CardHeader>
@@ -241,6 +329,8 @@ function ConnectedCard({ aiConfigured }: { aiConfigured: boolean }) {
           )}
         </div>
 
+        <LastSync since={lastSyncIso} />
+
         <Separator />
 
         <form action={disconnectGmail}>
@@ -254,12 +344,21 @@ function ConnectedCard({ aiConfigured }: { aiConfigured: boolean }) {
   )
 }
 
-function FilterChips({ active }: { active: string | null }) {
+function FilterChips({
+  active,
+  counts,
+  total,
+}: {
+  active: string | null
+  counts: Record<string, number>
+  total: number
+}) {
   return (
     <div className="flex flex-wrap items-center gap-1.5">
-      {FILTERS.map(({ label, value }) => {
+      {FILTER_DEFS.map(({ label, value }) => {
         const isActive = (value ?? null) === active
         const href = value ? `/dashboard?cat=${value}` : "/dashboard"
+        const count = value === null ? total : counts[value] ?? 0
         return (
           <Link
             key={label}
@@ -271,6 +370,16 @@ function FilterChips({ active }: { active: string | null }) {
             aria-current={isActive ? "page" : undefined}
           >
             {label}
+            {count > 0 ? (
+              <span
+                className={cn(
+                  "ml-1 tabular-nums",
+                  isActive ? "" : "text-muted-foreground"
+                )}
+              >
+                ({count})
+              </span>
+            ) : null}
           </Link>
         )
       })}
@@ -290,29 +399,28 @@ type EmailRow = {
   draft_reply: string | null
   received_at: string | null
   processed_at: string
+  replied_at: string | null
 }
 
 function EmailList({
   emails,
   activeCategory,
+  totalClassified,
+  unprocessedCount,
 }: {
   emails: EmailRow[]
   activeCategory: string | null
+  totalClassified: number
+  unprocessedCount: number
 }) {
   if (emails.length === 0) {
-    return (
-      <Card>
-        <CardHeader>
-          <CardTitle>Inbox</CardTitle>
-          <CardDescription>
-            {activeCategory
-              ? `No emails in "${activeCategory}" yet. Try another filter or process more emails.`
-              : "Nothing here yet. Sync to pull recent emails, then click Process emails."}
-          </CardDescription>
-        </CardHeader>
-      </Card>
-    )
+    return <EmptyInbox activeCategory={activeCategory} />
   }
+
+  // "Inbox zero" cue — only when no filter is active, all rows are
+  // classified, and nothing is left unprocessed.
+  const inboxZero =
+    !activeCategory && totalClassified > 0 && unprocessedCount === 0
 
   return (
     <Card>
@@ -322,8 +430,9 @@ function EmailList({
           {activeCategory ? ` · ${activeCategory}` : ""}
         </CardTitle>
         <CardDescription>
-          Sorted by urgency, then most recent. Unprocessed emails sit at the
-          bottom.
+          {inboxZero
+            ? "Inbox zero (the AI version). Sync again to pull new arrivals."
+            : "Sorted by urgency, then most recent. Unprocessed emails sit at the bottom."}
         </CardDescription>
       </CardHeader>
       <CardContent className="px-0">
@@ -333,6 +442,42 @@ function EmailList({
           ))}
         </ul>
       </CardContent>
+    </Card>
+  )
+}
+
+function EmptyInbox({ activeCategory }: { activeCategory: string | null }) {
+  if (activeCategory) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>No {activeCategory} emails</CardTitle>
+          <CardDescription>
+            Nothing in this bucket yet. Try another filter, or process more
+            emails to fill it out.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Link
+            href="/dashboard"
+            className={buttonVariants({ variant: "outline", size: "sm" })}
+          >
+            View all
+          </Link>
+        </CardContent>
+      </Card>
+    )
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Empty inbox</CardTitle>
+        <CardDescription className="flex items-center gap-1.5">
+          <RefreshCw className="size-3" />
+          Sync to pull the most recent 50 messages from Gmail.
+        </CardDescription>
+      </CardHeader>
     </Card>
   )
 }
@@ -377,6 +522,11 @@ function EmailItem({ email }: { email: EmailRow }) {
               <span className="text-xs font-medium tabular-nums">
                 {email.urgency_score}/10
               </span>
+            ) : null}
+            {email.replied_at ? (
+              <Badge variant="outline" className="border-foreground/30">
+                Replied
+              </Badge>
             ) : null}
             {email.category ? (
               <Badge

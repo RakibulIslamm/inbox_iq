@@ -4,7 +4,7 @@ import { AI_SETUP_MESSAGE, readAIEnv } from "./env"
 /**
  * Returns an OpenAI-SDK-compatible client pointed at OpenRouter. Identical
  * surface area as the openai client, but `model` strings should be OpenRouter
- * slugs (e.g. "deepseek/deepseek-v3.2").
+ * slugs (e.g. "deepseek/deepseek-v4-flash").
  *
  * The HTTP-Referer / X-Title headers are recommended by OpenRouter for
  * attribution and analytics.
