@@ -418,8 +418,6 @@ export default async function BillingPage({
         ) : null}
       </Card>
 
-      {stripeCfg.configured && isStripeTestMode() ? <TestCardsCard /> : null}
-
       {/* Plans comparison */}
       <div className="grid gap-4 md:grid-cols-2">
         <PlanCard
@@ -433,6 +431,8 @@ export default async function BillingPage({
           stripeConfigured={stripeCfg.configured}
         />
       </div>
+
+      {stripeCfg.configured && isStripeTestMode() ? <TestCardsCard /> : null}
 
       {paymentMethod ? <PaymentMethodCard pm={paymentMethod} /> : null}
       {invoices.length > 0 ? <InvoicesCard invoices={invoices} /> : null}
