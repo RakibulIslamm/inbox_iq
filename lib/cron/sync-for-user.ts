@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { classifyEmail } from "@/lib/ai/agents/classifier"
+import { preTriageEmail } from "@/lib/ai/triage"
 import { fetchRecentEmails } from "@/lib/gmail/fetch"
 import {
   GmailNotConnectedError,
@@ -110,7 +111,46 @@ export async function syncAndClassifyForUser(
     .update({ last_synced_at: newWatermark.toISOString() })
     .eq("id", userId)
 
-  // 4. Classify any unprocessed emails, capped by quota for free users.
+  // 4. Classify any unprocessed emails. Two-stage: free heuristic first,
+  // then AI for the remainder (capped by free-tier quota).
+  const { data: unprocessed, error: unprocessedError } = await supabase
+    .from("emails")
+    .select("id, subject, sender, snippet, body")
+    .eq("user_id", userId)
+    .is("category", null)
+    .order("received_at", { ascending: false, nullsFirst: false })
+
+  if (unprocessedError) {
+    return { ...out, ok: false, error: `unprocessed read: ${unprocessedError.message}` }
+  }
+  if (!unprocessed || unprocessed.length === 0) return out
+
+  type EmailRow = {
+    id: number
+    subject: string | null
+    sender: string | null
+    snippet: string | null
+    body: string | null
+  }
+  const items = unprocessed as EmailRow[]
+
+  // Split via deterministic pre-triage (mailer-daemon, OOO, do-not-reply).
+  const heuristicHits: { email: EmailRow; classification: ReturnType<typeof preTriageEmail> }[] = []
+  const needsAi: EmailRow[] = []
+  for (const email of items) {
+    const triage = preTriageEmail({
+      subject: email.subject,
+      sender: email.sender,
+      body: email.body,
+      snippet: email.snippet,
+    })
+    if (triage.handled) {
+      heuristicHits.push({ email, classification: triage })
+    } else {
+      needsAi.push(email)
+    }
+  }
+
   let classifyBudget: number | null = null
   if (plan === "free") {
     const dayStart = new Date()
@@ -125,45 +165,57 @@ export async function syncAndClassifyForUser(
       0,
       FREE_TIER_DAILY_LIMIT - (classifiedToday ?? 0)
     )
-    if (classifyBudget === 0) {
+    if (classifyBudget === 0 && heuristicHits.length === 0) {
       out.skippedReason = "free_quota_exhausted"
       return out
     }
   }
 
-  let unprocessedQuery = supabase
-    .from("emails")
-    .select("id, subject, sender, snippet, body")
-    .eq("user_id", userId)
-    .is("category", null)
-    .order("received_at", { ascending: false, nullsFirst: false })
-  if (classifyBudget !== null) {
-    unprocessedQuery = unprocessedQuery.limit(classifyBudget)
-  }
-  const { data: unprocessed, error: unprocessedError } = await unprocessedQuery
-  if (unprocessedError) {
-    return { ...out, ok: false, error: `unprocessed read: ${unprocessedError.message}` }
-  }
-  if (!unprocessed || unprocessed.length === 0) return out
-
-  type EmailRow = {
-    id: number
-    subject: string | null
-    sender: string | null
-    snippet: string | null
-    body: string | null
-  }
-
-  const items = unprocessed as EmailRow[]
+  // 4a. Persist heuristic hits — no AI, no quota burn.
   let classified = 0
   let failed = 0
+  await Promise.all(
+    heuristicHits.map(async ({ email, classification }) => {
+      if (!classification.handled) return // narrow the discriminated union
+      const c = classification.classification
+      const { error: updateError } = await supabase
+        .from("emails")
+        .update({
+          category: c.category,
+          urgency_score: c.urgency_score,
+          summary: c.summary,
+          action_items: c.action_items,
+          draft_reply: c.draft_reply,
+          reply_required: c.reply_required,
+          no_reply_reason: c.no_reply_reason,
+          action_type: c.action_type,
+          processed_at: new Date().toISOString(),
+        })
+        .eq("id", email.id)
+        .eq("user_id", userId)
+      if (updateError) {
+        failed += 1
+        console.warn(
+          `[cron] heuristic update failed for email ${email.id}:`,
+          updateError.message
+        )
+      } else {
+        classified += 1
+      }
+    })
+  )
+
+  // 4b. AI batch — quota-capped slice of the remainder.
+  const aiBatch =
+    classifyBudget !== null ? needsAi.slice(0, classifyBudget) : needsAi
+
   let cursor = 0
   await Promise.all(
-    Array.from({ length: Math.min(CLASSIFY_CONCURRENCY, items.length) }, async () => {
+    Array.from({ length: Math.min(CLASSIFY_CONCURRENCY, aiBatch.length) }, async () => {
       while (true) {
         const i = cursor++
-        if (i >= items.length) return
-        const email = items[i]
+        if (i >= aiBatch.length) return
+        const email = aiBatch[i]
         try {
           const c = await classifyEmail({
             subject: email.subject,
@@ -179,6 +231,9 @@ export async function syncAndClassifyForUser(
               summary: c.summary,
               action_items: c.action_items,
               draft_reply: c.draft_reply,
+              reply_required: c.reply_required,
+              no_reply_reason: c.no_reply_reason,
+              action_type: c.action_type,
               processed_at: new Date().toISOString(),
             })
             .eq("id", email.id)

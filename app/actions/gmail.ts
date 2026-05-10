@@ -17,8 +17,15 @@ export type SyncResult =
   | { ok: true; synced: number; skipped: number }
   | { ok: false; error: string; reauth?: boolean; notConnected?: boolean }
 
-/** Cap on the manual "Sync now" pull. Cron runs unbounded with `since`. */
-const MANUAL_SYNC_LIMIT = 200
+/**
+ * Per-plan caps on the manual "Sync now" pull. Free is tighter because
+ * each synced email turns into a potential AI classification call inside
+ * the daily 10-message quota — pulling ancient inbox just wastes budget.
+ * Pro has unlimited AI, so the cap is mostly a runaway-protection guard.
+ * Cron runs unbounded with `since` regardless of plan.
+ */
+const MANUAL_SYNC_LIMIT_FREE = 50
+const MANUAL_SYNC_LIMIT_PRO = 200
 
 export async function syncEmails(): Promise<SyncResult> {
   if (!readGmailEnv().configured) {
@@ -31,17 +38,34 @@ export async function syncEmails(): Promise<SyncResult> {
   } = await supabase.auth.getUser()
   if (!user) return { ok: false, error: "Not signed in." }
 
-  // Read the watermark from the previous sync. On a brand-new connection
-  // this is null, so the first sync falls back to the most recent N
-  // INBOX messages without a `since` filter.
   const { data: profile } = await supabase
     .from("profiles")
-    .select("last_synced_at")
+    .select("plan, last_synced_at")
     .eq("id", user.id)
     .maybeSingle()
-  const since = profile?.last_synced_at
+
+  const plan: "free" | "pro" = profile?.plan === "pro" ? "pro" : "free"
+  const lastSynced = profile?.last_synced_at
     ? new Date(profile.last_synced_at as string)
     : null
+
+  // Plan-aware sync window:
+  //   - Pro: trust the watermark. First sync (lastSynced=null) → no `since`
+  //     filter, so the most-recent N (cap below) INBOX messages get pulled.
+  //     Subsequent syncs are pure incremental — no data is silently dropped.
+  //   - Free: clamp `since` to the later of (last_synced_at, today's 00:00).
+  //     This keeps the 10/day AI quota focused on fresh mail; users won't
+  //     burn it classifying last week's backlog. Costs them some history,
+  //     but they can upgrade to Pro to get the full window.
+  let since: Date | null
+  if (plan === "pro") {
+    since = lastSynced
+  } else {
+    const dayStart = new Date()
+    dayStart.setHours(0, 0, 0, 0)
+    since = lastSynced && lastSynced > dayStart ? lastSynced : dayStart
+  }
+  const limit = plan === "pro" ? MANUAL_SYNC_LIMIT_PRO : MANUAL_SYNC_LIMIT_FREE
 
   // Capture the boundary BEFORE the fetch so we don't lose messages that
   // arrive while we're still pulling pages.
@@ -51,7 +75,7 @@ export async function syncEmails(): Promise<SyncResult> {
   try {
     messages = await fetchRecentEmails(user.id, {
       since,
-      limit: MANUAL_SYNC_LIMIT,
+      limit,
     })
   } catch (e) {
     if (e instanceof GmailNotConnectedError) {

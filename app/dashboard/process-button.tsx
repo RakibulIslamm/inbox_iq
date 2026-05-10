@@ -27,10 +27,18 @@ export function ProcessButton({
     if (!state || state === lastReported.current) return
     lastReported.current = state
     if (state.ok) {
-      const desc =
-        state.remaining !== null
-          ? `${state.remaining} left in today's free quota.`
-          : undefined
+      // Build a description that surfaces the AI-vs-heuristic split when it
+      // matters, plus remaining free-tier quota.
+      const parts: string[] = []
+      if (state.heuristic > 0) {
+        parts.push(
+          `${state.heuristic} auto-bucketed for free, ${state.ai} via AI`
+        )
+      }
+      if (state.remaining !== null) {
+        parts.push(`${state.remaining} AI calls left today`)
+      }
+      const desc = parts.length > 0 ? parts.join(" · ") : undefined
       toast.success(
         `Classified ${state.processed} ${state.processed === 1 ? "email" : "emails"}.`,
         desc ? { description: desc } : undefined
