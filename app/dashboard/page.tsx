@@ -82,11 +82,13 @@ export default async function DashboardPage({
 
   const { data: connection } = await supabase
     .from("gmail_connections")
-    .select("user_id, created_at")
+    .select("user_id, created_at, gmail_email")
     .eq("user_id", user.id)
     .maybeSingle()
 
   const connected = Boolean(connection)
+  const connectedEmail =
+    (connection?.gmail_email as string | null | undefined) ?? null
 
   const activeCategory =
     params.cat && (EMAIL_CATEGORIES as readonly string[]).includes(params.cat)
@@ -181,6 +183,7 @@ export default async function DashboardPage({
         <ConnectedCard
           aiConfigured={aiConfigured}
           lastSyncIso={lastSyncIso}
+          connectedEmail={connectedEmail}
         />
       ) : (
         <ConnectCard />
@@ -295,15 +298,29 @@ function ConnectCard() {
 function ConnectedCard({
   aiConfigured,
   lastSyncIso,
+  connectedEmail,
 }: {
   aiConfigured: boolean
   lastSyncIso: string | null
+  connectedEmail: string | null
 }) {
   return (
     <Card>
       <CardHeader>
         <div className="flex items-center justify-between">
-          <CardTitle>Gmail connected</CardTitle>
+          <div className="min-w-0">
+            <CardTitle className="flex flex-wrap items-center gap-2">
+              Gmail connected
+              {connectedEmail ? (
+                <span
+                  className="truncate text-xs font-normal text-muted-foreground"
+                  title={connectedEmail}
+                >
+                  · {connectedEmail}
+                </span>
+              ) : null}
+            </CardTitle>
+          </div>
           <Badge variant="outline">
             <CheckCircle2 className="size-3" />
             Active

@@ -47,7 +47,11 @@ For each email you receive, you must call the \`classify_email\` tool exactly on
 
 - action_items: up to 3 short, concrete tasks the recipient should take. Empty array if none. Each item is a verb phrase ("Reply with availability", "Pay invoice #4421 by Friday").
 
-- draft_reply: a short, professional reply ready to send, if and only if the email expects a reply. Otherwise null. Don't draft replies for newsletters, automated alerts, or one-way notifications. Match the sender's tone and language. No placeholders like [your name].
+- draft_reply: a short, ready-to-send reply, OR null. Set to null for newsletters, automated alerts, and one-way notifications. When you do draft:
+  - The first sentence MUST reference one specific detail from the email (a question asked, a name, a date, a number, the project mentioned). Forbidden generic openers: "Thanks for reaching out", "I've received your message", "I'll get back to you shortly", "as soon as possible".
+  - Adapt length: 1–2 sentences for quick acks, 3–5 sentences for substantive client / personal mail. Never pad.
+  - If the email asks a yes/no, answer it. If it asks for a time, propose one. If you don't have the info, ask exactly the question you'd need.
+  - Match the sender's register and language. Plain text. No "[Your name]" placeholders.
 
 Return only via the tool call. Do not produce any other text.`
 

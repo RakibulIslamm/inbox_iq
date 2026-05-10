@@ -1,5 +1,6 @@
 import { cookies } from "next/headers"
 import { NextResponse, type NextRequest } from "next/server"
+import { google } from "googleapis"
 import { readGmailEnv } from "@/lib/gmail/env"
 import { createOAuthClient, GMAIL_STATE_COOKIE } from "@/lib/gmail/oauth"
 import { createClient } from "@/lib/supabase/server"
@@ -54,6 +55,20 @@ export async function GET(request: NextRequest) {
     return fail("no_refresh_token")
   }
 
+  // Fetch the actual Gmail address that was authorised so the dashboard can
+  // render "Connected · alice@gmail.com" instead of a generic badge. This is
+  // best-effort — if it fails the connection still works.
+  let gmailAddress: string | null = null
+  try {
+    const oauth = createOAuthClient()
+    oauth.setCredentials(tokens)
+    const gmail = google.gmail({ version: "v1", auth: oauth })
+    const profileRes = await gmail.users.getProfile({ userId: "me" })
+    gmailAddress = profileRes.data.emailAddress ?? null
+  } catch (e) {
+    console.warn("[gmail] could not fetch profile email:", e)
+  }
+
   const { error: upsertError } = await supabase
     .from("gmail_connections")
     .upsert(
@@ -64,6 +79,7 @@ export async function GET(request: NextRequest) {
         expires_at: tokens.expiry_date
           ? new Date(tokens.expiry_date).toISOString()
           : null,
+        gmail_email: gmailAddress,
       },
       { onConflict: "user_id" }
     )

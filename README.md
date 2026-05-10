@@ -111,6 +111,7 @@ Open [http://localhost:3000](http://localhost:3000).
    2. [`supabase/migrations/0002_gmail_emails.sql`](supabase/migrations/0002_gmail_emails.sql) — `body`, `received_at`
    3. [`supabase/migrations/0003_email_threading.sql`](supabase/migrations/0003_email_threading.sql) — `thread_id`, `message_id_header`, `to_header`, `cc_header`, `replied_at`
    4. [`supabase/migrations/0004_profile_extras.sql`](supabase/migrations/0004_profile_extras.sql) — `profiles.name` (auto-derived display name) + subscription state columns (`subscription_status`, `cancel_at_period_end`, `current_period_end`); refreshes `handle_new_user`
+   5. [`supabase/migrations/0005_sync_extras.sql`](supabase/migrations/0005_sync_extras.sql) — `gmail_connections.gmail_email` (which Gmail address is connected, captured at OAuth callback) + `profiles.last_synced_at` (watermark for the incremental twice-daily cron)
 4. **Authentication → URL Configuration** → Site URL `http://localhost:3000`; Redirect URLs add `http://localhost:3000/auth/callback`.
 
 ### 2. Google sign-in (Supabase provider)

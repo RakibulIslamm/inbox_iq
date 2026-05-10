@@ -17,6 +17,9 @@ export type SyncResult =
   | { ok: true; synced: number; skipped: number }
   | { ok: false; error: string; reauth?: boolean; notConnected?: boolean }
 
+/** Cap on the manual "Sync now" pull. Cron runs unbounded with `since`. */
+const MANUAL_SYNC_LIMIT = 200
+
 export async function syncEmails(): Promise<SyncResult> {
   if (!readGmailEnv().configured) {
     return { ok: false, error: "Gmail OAuth is not configured." }
@@ -28,9 +31,28 @@ export async function syncEmails(): Promise<SyncResult> {
   } = await supabase.auth.getUser()
   if (!user) return { ok: false, error: "Not signed in." }
 
+  // Read the watermark from the previous sync. On a brand-new connection
+  // this is null, so the first sync falls back to the most recent N
+  // INBOX messages without a `since` filter.
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("last_synced_at")
+    .eq("id", user.id)
+    .maybeSingle()
+  const since = profile?.last_synced_at
+    ? new Date(profile.last_synced_at as string)
+    : null
+
+  // Capture the boundary BEFORE the fetch so we don't lose messages that
+  // arrive while we're still pulling pages.
+  const newWatermark = new Date()
+
   let messages: SimplifiedEmail[]
   try {
-    messages = await fetchRecentEmails(user.id, 50)
+    messages = await fetchRecentEmails(user.id, {
+      since,
+      limit: MANUAL_SYNC_LIMIT,
+    })
   } catch (e) {
     if (e instanceof GmailNotConnectedError) {
       return { ok: false, error: e.message, notConnected: true }
@@ -44,6 +66,12 @@ export async function syncEmails(): Promise<SyncResult> {
   }
 
   if (messages.length === 0) {
+    // Still bump the watermark — there's nothing new but the sync ran.
+    await supabase
+      .from("profiles")
+      .update({ last_synced_at: newWatermark.toISOString() })
+      .eq("id", user.id)
+    revalidatePath("/dashboard")
     return { ok: true, synced: 0, skipped: 0 }
   }
 
@@ -83,6 +111,13 @@ export async function syncEmails(): Promise<SyncResult> {
     })
     return { ok: false, error: upsertError.message }
   }
+
+  // Bump watermark only after a successful upsert. If the upsert fails the
+  // next sync will still try to pull the same window — cheap retry.
+  await supabase
+    .from("profiles")
+    .update({ last_synced_at: newWatermark.toISOString() })
+    .eq("id", user.id)
 
   revalidatePath("/dashboard")
   return {
